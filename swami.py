@@ -137,6 +137,8 @@ def add_usr_var(name, type, token):
     else:
         compiler_error(token, "Redefinition of variable '&t'")
 
+human_operands = "=+-*/"
+
 string_literals = []
 def add_string(tokens, index):
     string_literals.append(tokens[index][-1])
@@ -229,7 +231,10 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                 if current_tk in sw_builtins or current_tk in sw_declared_funcs:
                     current_statement, index = parse_function_call(index, tokens)
                 elif current_tk in sw_declared_vars:
-                    current_statement, index = parse_var_reference(index, tokens)
+                    if 0:#tokens[index+1] in "=+/-*":
+                        current_statement, index = parse_intrinsic(index, tokens)
+                    else:
+                        current_statement, index = parse_var_reference(index, tokens)
                 else:
                     compiler_error(tokens[index], "Unexpected token '&t'")
     return current_statement, index
@@ -256,15 +261,27 @@ def parse_body(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[stat
 @loud_call
 def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     intrinsic = statement()
-    intrinsic.name = tokens[index][-1]
-    intrinsic.kind = kind.INTRINSIC
-    intrinsic.type = human_intrinsic.index(tokens[index][-1])
-    index+=1
-    while tokens[index][-1] != ";":
-        new_stm, index = parse_statement(index, tokens)
-        intrinsic.args.append(new_stm)
-    index+=1
+    if tokens[index][-1] in human_intrinsic:
+        intrinsic.name = tokens[index][-1]
+        intrinsic.kind = kind.INTRINSIC
+        intrinsic.type = human_intrinsic.index(tokens[index][-1])
+        index+=1
+        while tokens[index][-1] != ";":
+            new_stm, index = parse_statement(index, tokens)
+            intrinsic.args.append(new_stm)
+        index+=1
+    # elif tokens[index+1][-1] in human_operands:
+    #     index+=1
+    #     intrinsic.name = tokens[index][-1]
+    #     intrinsic.kind = kind.INTRINSIC
+    #     intrinsic.type = human_intrinsic.index(tokens[index][-1])
+    #     index+=1
+    #     while tokens[index][-1] != ";":
+    #         new_stm, index = parse_statement(index, tokens)
+    #         intrinsic.args.append(new_stm)
+        
     return intrinsic, index
+
 
 @loud_call
 def parse_num_literal(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
