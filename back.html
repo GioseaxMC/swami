@@ -1,0 +1,60 @@
+<hmtl:5>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Back Soon</title>
+        <style>
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                background-color: rgb(12, 12, 12);
+                color: white;
+                font-family: monospace;
+                font-weight: bold;
+                font-size: 12em;
+                flex-direction: column;
+            }
+            #countdown {
+                text-align: center;
+                font-size: 0.5em;
+                margin-top: 20px;
+            }
+        </style>
+        <script>
+            function startCountdown(duration, display) {
+                var timer = duration, minutes, seconds;
+                setInterval(function () {
+                    minutes = parseInt(timer / 60, 10);
+                    seconds = parseInt(timer % 60, 10);
+
+                    minutes = minutes < 10 ? "0" + minutes : minutes;
+                    seconds = seconds < 10 ? "0" + seconds : seconds;
+
+                    display.textContent = minutes + ":" + seconds;
+
+                    if (--timer < 0) {
+                        timer = duration;
+                    }
+                }, 1000);
+            }
+
+            window.onload = function () {
+                var fiveMinutes = 60 * 5,
+                    display = document.querySelector('#countdown');
+                startCountdown(fiveMinutes, display);
+            };
+        </script>
+    </head>
+    <body>
+        Back Soon
+        <div id="countdown">
+            05:00
+        </div>
+    </body>
+    </html>
+</hmtl:5>

@@ -1,6 +1,20 @@
-func int main() {
-    int number = 256 * 2 * 2;
-    printf("the number is: %i", number)
-    return 0;
+
+
+int iota_counter = 0;
+
+func int iota() {
+    iota_counter = iota_counter + 1;
+    return iota_counter;
 }
 
+func int main() {
+    iota()
+    iota()
+    iota()
+    iota()
+    iota()
+    iota()
+    int var = iota();
+    printf("%i", var)
+    return 0;
+}
