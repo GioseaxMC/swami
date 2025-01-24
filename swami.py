@@ -20,13 +20,26 @@ def debug(*arguments) -> None:
         print(arg, end=" ")
     print()
 
-def compiler_error(token, prompt, errno = -1):
+def parser_error(token, prompt, errno = -1):
     print(get_tk_pos(token)+":", "ERROR:", prompt.replace("&t", token[-1]))
     with open(token[0], "r") as fp:
         content = fp.read()
         print("\n  "+content.split("\n")[token[1]])
         print("  "+" "*token[2]+"^")
         print("  "+" "*token[2]+"| here")
+    exit(errno)
+
+def compiler_error(state, prompt, errno = -1):
+    ogToken = state.ogToken
+    lastToken = state.lastToken
+    print(get_tk_pos(ogToken)+":", "ERROR:", prompt.replace("&t", ogToken[-1]))
+    with open(ogToken[0], "r") as fp:
+        content = fp.read()
+        debug("ogToken:", ogToken)
+        debug("lastToken:", lastToken)
+        print("\n  "+content.split("\n")[ogToken[1]])
+        print("  "+" "*ogToken[2]+"^"*(lastToken[2] - ogToken[2] + 1))
+        print("  "+" "*ogToken[2]+"| here")
     exit(errno)
 
 def get_tk_name(token: tuple[str, int, int, str]):
@@ -51,6 +64,7 @@ class kind:
     INT_LITER = iota()
     INTRINSIC = iota()
     VAR_REF = iota()
+    OPERAND = iota()
 
 @dataclass
 class sw_type:
@@ -97,7 +111,8 @@ def human_kind(kindex: int):
         "variable declaration",
         "int literal",
         "intrinsic",
-        "variable reference"
+        "variable reference",
+        "operand"
     ][kindex]
 
 sw_builtins = { # name : type
@@ -128,14 +143,14 @@ def add_usr_func(name, type, token):
     if name not in sw_declared_funcs:
         sw_declared_funcs[name] = type
     else:
-        compiler_error(token, "Redefinition of function '&t'")
+        parser_error(token, "Redefinition of function '&t'")
 
 def add_usr_var(name, type, token):
     global sw_declared_vars
     if name not in sw_declared_vars:
         sw_declared_vars[name] = type
     else:
-        compiler_error(token, "Redefinition of variable '&t'")
+        parser_error(token, "Redefinition of variable '&t'")
 
 human_operands = "=+-*/"
 
@@ -208,9 +223,11 @@ class statement:
         self.args = []
         self.block = None
         self.value = None
+        self.ogToken = None
 
 def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     current_tk = tokens[index+0][-1]
+    ogToken = tokens[index]
     match current_tk:
         case ";"|"," :
             return None, index+1
@@ -231,12 +248,16 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                 if current_tk in sw_builtins or current_tk in sw_declared_funcs:
                     current_statement, index = parse_function_call(index, tokens)
                 elif current_tk in sw_declared_vars:
-                    if 0:#tokens[index+1] in "=+/-*":
-                        current_statement, index = parse_intrinsic(index, tokens)
-                    else:
-                        current_statement, index = parse_var_reference(index, tokens)
+                    current_statement, index = parse_var_reference(index, tokens)
+                elif current_tk in human_operands:
+                    current_statement, index = parse_operand(index, tokens)
                 else:
-                    compiler_error(tokens[index], "Unexpected token '&t'")
+                    if current_tk.isalnum():
+                        parser_error(tokens[index], "'&t' is undefined")
+                    else:
+                        parser_error(tokens[index], "Unexpected token '&t'")
+    current_statement.ogToken = ogToken
+    current_statement.lastToken = tokens[index-1]
     return current_statement, index
 
 @loud_call
@@ -249,13 +270,14 @@ def parse_block(index: int, tokens: tuple[str, int, int, str]) -> tuple[statemen
 @loud_call
 def parse_body(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
     statements = []
-    while index < len(tokens) and tokens[index][-1] != "}":
+    while index < len(tokens) and tokens[index][-1] != "}" and tokens[index][-1] != ";":
         debug("body: Trying to parse", tokens[index][-1], "at", index)
         current_stm, index = parse_statement(index, tokens)
         if index < len(tokens):
-            debug("body: tobeparsed:", tokens[index][-1], "at", index)
+            debug("body: [NEXT]: tobeparsed:", tokens[index][-1], "at", index)
         if current_stm:
             statements.append(current_stm)
+    debug("body: [DONE]: Done parsing body")
     return statements, index+1
 
 @loud_call
@@ -270,15 +292,6 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             new_stm, index = parse_statement(index, tokens)
             intrinsic.args.append(new_stm)
         index+=1
-    # elif tokens[index+1][-1] in human_operands:
-    #     index+=1
-    #     intrinsic.name = tokens[index][-1]
-    #     intrinsic.kind = kind.INTRINSIC
-    #     intrinsic.type = human_intrinsic.index(tokens[index][-1])
-    #     index+=1
-    #     while tokens[index][-1] != ";":
-    #         new_stm, index = parse_statement(index, tokens)
-    #         intrinsic.args.append(new_stm)
         
     return intrinsic, index
 
@@ -286,14 +299,13 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
 @loud_call
 def parse_num_literal(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     number = statement()
-    number.type = sw_type.STR
+    number.type = sw_type.INT
     number.kind = kind.INT_LITER
-    number.name = tokens[index][-1]
+    number.value = tokens[index][-1]
     return number, index+1
 
 @loud_call
 def parse_str_literal(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
-    debug("Handling string literal")
     current_stm = statement()
     current_stm.name = add_string(tokens, index)
     current_stm.kind = kind.STR_LITER
@@ -307,25 +319,22 @@ def parse_var_decl(index: int, tokens: tuple[str, int, int, str]) -> tuple[state
     variable.kind = kind.VAR_DECL
     if variable.type == sw_type.VOID:
         if tokens[index+1][-1].isalnum():
-            compiler_error(tokens[index], "type void cannot describe a value")
+            parser_error(tokens[index], "type void cannot describe a value")
         index+=1
     else:
         index+=1
         variable.name = tokens[index][-1]
         if not uisalnum(variable.name):
-            compiler_error(tokens[index], "Token '&t' is not fit to be a variable name.")
+            parser_error(tokens[index], "Token '&t' is not fit to be a variable name.")
         add_usr_var(variable.name, variable.type, tokens[index])
         index+=1
         if tokens[index][-1] == "=":
             index+=1
-            if variable.type == sw_type.STR:
-                variable.value = add_string(tokens, index)
-            else:
-                variable.value = tokens[index][-1]
-                if variable.type != get_type(variable.value):
-                    compiler_error(tokens[index],
-                        f"Declared as '{human_type[variable.type]}' but received '{human_type[get_type(variable.value)]}'")
-            index+=1
+            debug("var_decl: Trying to parse", tokens[index][-1], "at", index)
+            variable.args, index = parse_body(index, tokens)
+            # if variable.type != variable.args:
+            #     parser_error(tokens[index],
+            #         f"Declared as '{human_type[variable.type]}' but received '{human_type[variable.args[0].type]}'")
     return variable, index
 
 @loud_call
@@ -345,6 +354,17 @@ def parse_var_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     variable.name = tokens[index][-1]
     index+=1
     return variable, index
+
+def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    operand = statement()
+    operand.kind = kind.OPERAND
+    operand.name = tokens[index][-1]
+    index+=1
+    debug("operand: Trying to parse", tokens[index][-1], "at", index)
+    new_stm, index = parse_statement(index, tokens)
+    debug("operand: [DONE]: tobeparsed:", tokens[index][-1], "at", index)
+    operand.args.append(new_stm)
+    return operand, index
 
 @loud_call
 def parse_function_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
@@ -384,7 +404,7 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
     index+=1
     
     if len(tokens) <= index:
-        compiler_error(tokens[name_index], "Missing body for function '&t'")
+        parser_error(tokens[name_index], "Missing body for function '&t'")
     if tokens[index][-1] == "{":
         function.block, index = parse_block(index+1, tokens)
     return function, index
@@ -423,7 +443,9 @@ def out_writeln(line: str = "", level: int = 0):
 def out_write(line: str = "", level: int = 0):
     out.write((" "*level*2)+line)
 
-sw_builtins.update(sw_declared_funcs)
+available_func = dict()
+available_func.update(sw_builtins)
+available_func.update(sw_declared_funcs)
 def compile_statement(state, level: int = 0):
     nlevel = level+1
     type_liota = []
@@ -432,12 +454,16 @@ def compile_statement(state, level: int = 0):
             debug("Compiling function call:", state.name)
             for arg in state.args:
                 type_liota.append(compile_statement(arg, level))
-            out_write(f"call {llvm_type[sw_builtins[state.name]]} @{state.name}(", level)
+            if available_func[state.name] == sw_type.VOID:
+                out_write(f"call void @{state.name}(", level)
+            else:
+                out_write(f"%{iota()} call {llvm_type[available_func[state.name]]} @{state.name}(", level)
             for idx, (viota, vtype) in enumerate(type_liota):
                 if idx:
                     out_write(", ")
                 out_write(f"{vtype} %{viota}")
             out_writeln(")")
+            return iota(-1), llvm_type[available_func[state.name]]
         case kind.FUNC_DECL:
             debug("Compiling function declaration:", state.name)
             out_write(f"\ndefine {llvm_type[state.type]} @{state.name}(", level)
@@ -448,8 +474,8 @@ def compile_statement(state, level: int = 0):
                 compile_statement(stm, nlevel)
             out_write("\n}\n", level)
         case kind.INT_LITER:
-            debug("Compiling int literal:", state.name)
-            out_writeln(f"%{iota()} = add i64 {state.name}, 0", level)
+            debug("Compiling int literal:", state.value)
+            out_writeln(f"%{iota()} = add i64 {state.value}, 0", level)
             return iota(-1), llvm_type[sw_type.INT]
         case kind.STR_LITER:
             debug("Compiling string literal:", state.name)
@@ -459,14 +485,14 @@ def compile_statement(state, level: int = 0):
             debug("Compiling variable declaration:", state.name)
             sw_declared_v_lvl[state.name] = level
             if level == 0:
-                if state.value:
-                    out_writeln(f"@{state.name} = global {llvm_type[state.type]} {state.value}", level)
-                else:
-                    out_writeln(f"@{state.name} = global {llvm_type[state.type]}", level)
+                out_writeln(f"@{state.name} = global {llvm_type[state.type]}", level)
             else:
                 out_writeln(f"%{state.name} = alloca {llvm_type[state.type]}", level)
-                if state.value:
-                    out_writeln(f"store {llvm_type[state.type]} {state.value}, ptr %{state.name}", level)
+            for arg in state.args:
+                viota, vtype = compile_statement(arg, level)
+            if vtype != llvm_type[state.type]:
+                compiler_error(state, f"Declared as '{human_type[state.type]}' but received '{human_type[llvm_type.index(vtype)]}'")
+            out_writeln(f"store {vtype} %{viota}, ptr %{state.name}", level)
         case kind.VAR_REF:
             debug("Compiling variable reference:", state.name)
             if sw_declared_v_lvl.get(state.name) == 0:
@@ -483,8 +509,26 @@ def compile_statement(state, level: int = 0):
                 if idx:
                     out_write(",")
                 out_write(f"{vtype} %{viota}", level)
+        case kind.OPERAND:
+            debug("Compiling operand:", state.name)
+            iota_1 = iota(-1)
+            for arg in state.args:
+                type_liota.append(compile_statement(arg, level))
+                # viota, vtype
+            if state.name == "=":
+                out_writeln(f"store {type_liota[1][1]} %{type_liota[1][0]}, ptr %{type_liota[0][0]}", level)
+            match state.name:
+                case "+":
+                    out_writeln(f"%{iota()} = add {type_liota[0][1]} %{type_liota[0][0]}, %{iota_1}", level)
+                case "-":
+                    out_writeln(f"%{iota()} = sub {type_liota[0][1]} %{type_liota[0][0]}, %{iota_1}", level)
+                case "*":
+                    out_writeln(f"%{iota()} = mul {type_liota[0][1]} %{type_liota[0][0]}, %{iota_1}", level)
+                case "/":
+                    out_writeln(f"%{iota()} = sdiv {type_liota[0][1]} %{type_liota[0][0]}, %{iota_1}", level)
+            return iota(-1), type_liota[0][1]
 
-out_writeln(f"""; file: {INFILE_PATH}
+out_writeln(f"""; FILE: {INFILE_PATH}
 
 declare void @printf(i8*, ...)
 define void @print(i8* %{iota()}) {{ call void (i8*, ...) @printf(i8* %{iota_counter}) ret void }}
