@@ -175,7 +175,20 @@ def add_usr_var(name, type, token):
     else:
         parser_error(token, "Redefinition of variable '&t'")
 
-human_operands = "=+-*/"
+human_operands = [
+    "=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "++",
+    "--",
+    "==",
+    ">",
+    "<",
+    ">=",
+    "<="
+]
 
 string_literals = {}
 def add_string(tokens, index):
@@ -185,12 +198,16 @@ def add_string(tokens, index):
 def uisalnum(s: str) -> bool:
     return all(c.isalnum() or c == "_" for c in s)
 
-def find_nalnum(line: str) -> int:
+def find_next(line: str) -> int:
     for idx, c in enumerate(line):
         if c == "\"":
             debug("stringlt:",line[idx:])
             idx = line[idx+1:].find("\"")
             return max(1, idx+2)
+        if c in human_operands:
+            print("trying op:", line[idx:idx+2])
+            if line[idx:idx+2] in human_operands:
+                return max(1, idx+2)
         if not uisalnum(c):
             return max(1, idx)
     return -1
@@ -200,7 +217,7 @@ def lex_tokens(line: str):
     while len(line) and not line.isspace():
         sline = line.lstrip()
         col = og_len - len(sline)
-        x = find_nalnum(sline)
+        x = find_next(sline)
         if x > 0:
             yield col, sline[:x]
             line = sline[x:]
@@ -404,7 +421,8 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
         operand.args, index = parse_body(index, tokens, ";")
     else:
         arg_stm, index = parse_statement(index, tokens)
-        operand.args.append(arg_stm)
+        if arg_stm:
+            operand.args.append(arg_stm)
     debug("operand: [DONE]: tobeparsed:", tokens[index][-1], "at", index)
     return operand, index
 
@@ -424,6 +442,10 @@ def parse_branch(index: int, tokens: tuple[str, int, int, str]) -> tuple[stateme
             branch.args.append(current_stm)
     elif branch.name == "else":
         parser_error(tokens[index], "Branch 'else' can only be used after 'if'")
+    elif branch.name == "while":
+        current_stm, index = parse_statement(index, tokens)
+        branch.args.append(current_stm)
+        branch.block, index = parse_statement(index, tokens)
     else:
         parser_error(tokens[index], "Branch '&t' is not implemented yet")
     return branch, index
@@ -631,6 +653,11 @@ def compile_statement(state, level: int = 0):
             # out_writeln(f"; Operand: {state.name}", level)
             varPtr = iota(-1)-1
             varVal = iota(-1)
+            vtype = "i64"
+            debug("len of args:", len(state.args))
+            if len(state.args):
+                for arg in state.args:
+                    debug(arg)
             for arg in state.args:
                 viota, vtype = compile_statement(arg, level)
             if state.name == "=":
@@ -644,14 +671,20 @@ def compile_statement(state, level: int = 0):
                     out_writeln(f"%{iota()} = mul {vtype} %{varVal}, %{viota}", level)
                 case "/":
                     out_writeln(f"%{iota()} = sdiv {vtype} %{varVal}, %{viota}", level)
+                case "++":
+                    out_writeln(f"%{iota()} = add i64 %{varVal}, 1", level)
+                    out_writeln(f"store i64 %{iota(-1)}, ptr %{varPtr}", level)
+                case "--":
+                    out_writeln(f"%{iota()} = sub i64 %{varVal}, 1", level)
+                    out_writeln(f"store i64 %{iota(-1)}, ptr %{varPtr}", level)
             debug("Operand:", state.name, "done")
             return iota(-1), vtype
 
         case kind.BRANCH:
             debug("Compiling branch:", state.name)
             # out_writeln(f"; Branch: {state.name}", level)
+            branch_id = iota()
             if state.name == "if":
-                branch_id = iota()
                 viota, vtype = compile_statement(state.args[0], level)
                 out_writeln(f"%{iota()} = icmp ne {vtype} %{viota}, 0", level)
                 out_write(f"br i1 %{iota(-1)}, label %then.{branch_id}", level)
@@ -669,6 +702,16 @@ def compile_statement(state, level: int = 0):
                 out_writeln(f"done.{branch_id}:", level)
             elif state.name == "else":
                 compile_statement(state.block, level)
+            elif state.name == "while":
+                out_writeln(f"br label %cond.{branch_id}", level)
+                out_writeln(f"cond.{branch_id}:", level)
+                viota, vtype = compile_statement(state.args[0], nlevel)
+                out_writeln(f"%{iota()} = icmp ne {vtype} %{viota}, 0", nlevel)
+                out_writeln(f"br i1 %{iota(-1)}, label %body.{branch_id}, label %end.{branch_id}", nlevel)
+                out_writeln(f"body.{branch_id}:", level)
+                compile_statement(state.block, nlevel)
+                out_writeln(f"br label %cond.{branch_id}", nlevel)
+                out_writeln(f"end.{branch_id}:", level)
             else:
                 compiler_error(state, "Branch '&t' is not implemented yet")
             return iota(-1), vtype

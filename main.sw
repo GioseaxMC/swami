@@ -1,16 +1,13 @@
 func void main(int argc, ptr argv) {
-    int condition = 0;
-    int ncondition = 1;
 
-    if condition {
-        println("Condition met")
-    } else if (ncondition) {
-        println("Condition met after one try")
-    } else {
-        println("Condition not met")
+    int looping = 0;
+    while (looping - 12) {
+        printf("Iteration %i - ", looping)
+        looping ++;
     }
-
     println("Hello World")
-
     return;
 }
+
+
+
