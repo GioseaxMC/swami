@@ -66,12 +66,14 @@ class kind:
     FUNC_CALL = iota(1)
     FUNC_DECL = iota()
     STR_LITER = iota()
-    BODY = iota()
+    BLOCK = iota()
     VAR_DECL = iota()
     INT_LITER = iota()
     INTRINSIC = iota()
     VAR_REF = iota()
     OPERAND = iota()
+    BRANCH = iota()
+    EXPRESSION = iota()
 
 @dataclass
 class sw_type:
@@ -111,18 +113,19 @@ def get_type(value: str) -> int:
     else:
         return -1
 
-def human_kind(kindex: int):
-    return str(kindex)+":"+[
-        "function call",
-        "function declaration",
-        "string literal",
-        "body",
-        "variable declaration",
-        "int literal",
-        "intrinsic",
-        "variable reference",
-        "operand"
-    ][kindex]
+human_kind = [
+    "function call",
+    "function declaration",
+    "string literal",
+    "body",
+    "variable declaration",
+    "int literal",
+    "intrinsic",
+    "variable reference",
+    "operand",
+    "branch",
+    "expression"
+]
 
 sw_builtins = { # name : type
     "print" : sw_type.VOID,
@@ -138,6 +141,12 @@ class INTRINSIC:
 human_intrinsic = [
     "return",
     "llvm"
+]
+
+human_branch = [
+    "if",
+    "else",
+    "while"
 ]
 
 llvm_intrinsic = [
@@ -240,6 +249,7 @@ class statement:
 def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     current_tk = tokens[index+0][-1]
     ogToken = tokens[index]
+    current_statement = statement()
     match current_tk:
         case ";"|"," :
             return None, index+1
@@ -247,6 +257,8 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             current_statement, index = parse_function_declaration(index+1, tokens)
         case "{":
             current_statement, index = parse_block(index+1, tokens)
+        case "(":
+            current_statement.args, index = parse_expression(index, tokens)
         case _:
             if current_tk[-1] == "\"" and current_tk[0] == "\"":
                 current_statement, index = parse_str_literal(index, tokens)
@@ -263,8 +275,10 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                     current_statement, index = parse_var_reference(index, tokens)
                 elif current_tk in human_operands:
                     current_statement, index = parse_operand(index, tokens)
+                elif current_tk in human_branch:
+                    current_statement, index = parse_branch(index, tokens)
                 else:
-                    if current_tk.isalnum():
+                    if uisalnum(current_tk):
                         parser_error(tokens[index], "'&t' is undefined")
                     else:
                         parser_error(tokens[index], "Unexpected token '&t'")
@@ -275,9 +289,17 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
 @loud_call
 def parse_block(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     blocker = statement()
-    blocker.kind = kind.BODY
+    blocker.kind = kind.BLOCK
     blocker.args, index = parse_body(index, tokens, "}")
     return blocker, index
+
+@loud_call
+def parse_expression(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
+    index+=1
+    expression = statement()
+    expression.kind = kind.EXPRESSION
+    expression.args, index = parse_body(index, tokens, ")")
+    return expression, index
 
 @loud_call
 def parse_body(index: int, tokens: tuple[str, int, int, str], stop_at, safefail_on="") -> tuple[list[statement], int]:
@@ -385,6 +407,26 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
     return operand, index
 
 @loud_call
+def parse_branch(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    branch = statement()
+    branch.kind = kind.BRANCH
+    branch.name = tokens[index][-1]
+    index+=1
+    if branch.name == "if":
+        current_stm, index = parse_statement(index, tokens)
+        branch.args.append(current_stm)
+        branch.block, index = parse_statement(index, tokens)
+        debug("[BRCH]: checking if is else")
+        if tokens[index][-1] == "else":
+            current_stm, index = parse_statement(index+1, tokens)
+            branch.args.append(current_stm)
+    elif branch.name == "else":
+        parser_error(tokens[index], "Branch 'else' can only be used after 'if'")
+    else:
+        parser_error(tokens[index], "Branch '&t' is not implemented yet")
+    return branch, index
+
+@loud_call
 def parse_function_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     function = statement()
     function.kind = kind.FUNC_CALL
@@ -431,20 +473,23 @@ if "main" not in sw_declared_funcs:
     parser_error((INFILE_PATH,0,0,""), "No main entry point found in the file, consider creating a main entry point.\n\n    expected:\n\n    func int main() {\n      return 0;\n    }")
 def print_state(states: list[statement], level: int = 0):
     nlevel = level+1
-    try:
-        for state in states:
-            debug(f"{" "*level*2}Name:", state.name);
-            debug(f"{" "*level*2} -Type:", human_type[state.type]);
-            debug(f"{" "*level*2} -Kind:", human_kind(state.kind));
-            debug(f"{" "*level*2} -Val :", state.value);
-            if len(state.args):
-                debug(f"{" "*level*2} -Args:");
+    for state in states:
+        debug(f"{" "*level*2}Name:", state.name)
+        debug(f"{" "*level*2} -Type:", human_type[state.type])
+        debug(f"{" "*level*2} -Kind:", human_kind[state.kind])
+        debug(f"{" "*level*2} -Val :", state.value)
+        if len(state.args):
+            debug(f"{" "*level*2} -Args:")
+            try:
                 print_state(state.args, nlevel)
-            if state.block:
-                debug(f"{" "*level*2} -Block:");
+            except Exception as e:
+                debug("Not printable:", e, state.args)
+        if state.block:
+            debug(f"{" "*level*2} -Block:")
+            try:
                 print_state([state.block,], nlevel)
-    except Exception as e:
-        debug("Not printable:", e)
+            except Exception as e:
+                debug("Not printable:", e, state.block)
 
 print_state(statements)
 for key, type in sw_declared_vars.items():
@@ -467,7 +512,12 @@ def compile_statement(state, level: int = 0):
     type_liota = []
     current_type_iota = None
     match state.kind:
-        
+        case kind.EXPRESSION | kind.BLOCK:
+            debug("Compiling function call:", state.name)
+            # out_writeln(f"; Function call: {state.name}", level)
+            for arg in state.args:
+                viota, vtype = compile_statement(arg, level)
+            return viota, vtype
         case kind.FUNC_CALL:
             debug("Compiling function call:", state.name)
             # out_writeln(f"; Function call: {state.name}", level)
@@ -589,6 +639,31 @@ def compile_statement(state, level: int = 0):
                     out_writeln(f"%{iota()} = sdiv {vtype} %{varVal}, %{viota}", level)
             debug("Operand:", state.name, "done")
             return iota(-1), vtype
+
+        case kind.BRANCH:
+            debug("Compiling branch:", state.name)
+            # out_writeln(f"; Branch: {state.name}", level)
+            if state.name == "if":
+                branch_id = iota()
+                viota, vtype = compile_statement(state.args[0], level)
+                out_writeln(f"%{iota()} = icmp ne {vtype} %{viota}, 0", level)
+                out_write(f"br i1 %{iota(-1)}, label %then.{branch_id}", level)
+                if len(state.args) > 1:
+                    out_writeln(f", label %else.{branch_id}")
+                else:
+                    out_writeln(f", label %done.{branch_id}")
+                out_writeln(f"then.{branch_id}:", level)
+                compile_statement(state.block, nlevel)
+                out_writeln(f"br label %done.{branch_id}", nlevel)
+                if len(state.args) > 1:
+                    out_writeln(f"else.{branch_id}:", level)
+                    compile_statement(state.args[1], nlevel)
+                    out_writeln(f"br label %done.{branch_id}", nlevel)
+                out_writeln(f"done.{branch_id}:", level)
+            elif state.name == "else":
+                compile_statement(state.block, level)
+            else:
+                compiler_error(state, "Branch '&t' is not implemented yet")
 
 out_writeln(f"""; FILE: {INFILE_PATH}
 
