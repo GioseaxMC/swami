@@ -124,7 +124,9 @@ human_kind = [
     "variable reference",
     "operand",
     "branch",
-    "expression"
+    "expression",
+
+    "-not assigned"
 ]
 
 sw_builtins = { # name : type
@@ -258,7 +260,7 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
         case "{":
             current_statement, index = parse_block(index+1, tokens)
         case "(":
-            current_statement.args, index = parse_expression(index, tokens)
+            current_statement, index = parse_expression(index, tokens)
         case _:
             if current_tk[-1] == "\"" and current_tk[0] == "\"":
                 current_statement, index = parse_str_literal(index, tokens)
@@ -516,8 +518,10 @@ def compile_statement(state, level: int = 0):
             debug("Compiling function call:", state.name)
             # out_writeln(f"; Function call: {state.name}", level)
             for arg in state.args:
+                debug(f"EXP:BLK: arg.kind: {human_kind[arg.kind]}")
                 viota, vtype = compile_statement(arg, level)
             return viota, vtype
+        
         case kind.FUNC_CALL:
             debug("Compiling function call:", state.name)
             # out_writeln(f"; Function call: {state.name}", level)
@@ -553,6 +557,7 @@ def compile_statement(state, level: int = 0):
                 compile_statement(stm, nlevel)
             # out_writeln("ret i64 0", nlevel)
             out_write("\n}\n")
+            return iota(-1), llvm_type[state.type]
         
         case kind.INT_LITER:
             debug("Compiling int literal:", state.value)
@@ -583,7 +588,8 @@ def compile_statement(state, level: int = 0):
                     if vtype != llvm_type[state.type]:
                         compiler_error(state, f"Declared as '{human_type[state.type]}' but received '{human_type[llvm_type.index(vtype)]}'")
                     out_writeln(f"store {vtype} %{viota}, ptr %{state.name}", level)
-        
+            return iota(-1), llvm_type[state.type]
+                
         case kind.VAR_REF:
             debug("Compiling variable reference:", state.name)
             # out_writeln(f"; Variable reference: {state.name}", level)
@@ -618,6 +624,7 @@ def compile_statement(state, level: int = 0):
                         compiler_error(state, f"Intrinsic '&t' expects one and only one argument, but {len(state.args)} were given.")
                     out_writeln(string_literals[state.args[0].name][1:-1], level)
                     string_literals.pop(state.args[0].name)
+            return iota(), "-none"
 
         case kind.OPERAND:
             debug("Compiling operand:", state.name)
@@ -664,6 +671,10 @@ def compile_statement(state, level: int = 0):
                 compile_statement(state.block, level)
             else:
                 compiler_error(state, "Branch '&t' is not implemented yet")
+            return iota(-1), vtype
+        case _:
+            debug(f"SOMEHOW GOT HERE: {state.kind}")
+            print_state((state,))
 
 out_writeln(f"""; FILE: {INFILE_PATH}
 
