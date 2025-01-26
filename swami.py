@@ -79,6 +79,8 @@ class kind:
     FUNC_EXT = iota()
     PLAIN_TYPE = iota()
     FUNC_INT = iota()
+    STRUCT = iota()
+    STRUCT_REF = iota()
 
 @dataclass
 class sw_type:
@@ -179,6 +181,11 @@ sw_declared_args = {
 } # maybe for future use \ no wayy
 sw_declared_vars  = dict()
 sw_declared_v_lvl = dict()
+sw_struct_info = dict()
+@dataclass
+class struct_info:
+    names = []
+    types = []
 
 def add_usr_func(name, type, token, length):
     global sw_declared_funcs
@@ -209,7 +216,8 @@ human_operands = [
     ">",
     "<",
     ">=",
-    "<="
+    "<=",
+    "."
 ]
 
 string_literals = {}
@@ -219,6 +227,9 @@ def add_string(tokens, index):
 
 def uisalnum(s: str) -> bool:
     return all(c.isalnum() or c == "_" for c in s)
+
+def tokenizable(s: str) -> bool:
+    return uisalnum(s) and not s[0].isnumeric() 
 
 def find_next(line: str) -> int:
     for idx, c in enumerate(line):
@@ -350,7 +361,7 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                 elif current_tk in human_branch:
                     current_statement, index = parse_branch(index, tokens)
                 else:
-                    if uisalnum(current_tk):
+                    if tokenizable(current_tk):
                         parser_error(tokens[index], "'&t' is undefined")
                     else:
                         return statement(), -1;
@@ -358,7 +369,6 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
     current_statement.lastToken = tokens[index-1]
     return current_statement, index
 
-@loud_call
 def parse_block(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     blocker = statement()
     blocker.kind = kind.BLOCK
@@ -374,15 +384,48 @@ def parse_expression(index: int, tokens: tuple[str, int, int, str]) -> tuple[lis
     return expression, index
 
 @loud_call
-def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
+def parse_name(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
+    name = statement()
+    if tokens[index][-1] not in human_type:
+        parser_error(tokens[index], "invalid typename for struct attribute")
+    name.type = human_type.index(tokens[index][-1])
+    index+=1
+    name.name = tokens[index][-1]
+    if not tokenizable(name.name):
+        parser_error(tokens[index], "'&t' is not a valid struct attribute name")
+    index+=1
+    if tokens[index][-1] != ";":
+        parser_error(tokens[index-1], "Expected ':' after attribute name")
+    return name, index
+
+
+@loud_call
+def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     index+=1
     struct = statement()
     struct.name = tokens[index][-1]
+    if not tokenizable(struct.name):
+        parser_error(tokens[index], "Token '&t' is not fit to be a struct name.")
+    if struct.name in sw_builtins or struct.name in (human_intrinsic+human_branch+human_type):
+        parser_error(tokens[index], "Token '&t' is a reserved keyword and cannot be a struct name.")
+    human_type.append(struct.name)
+    llvm_type.append(f"%struct.{struct.name}")
+    add_usr_var(struct.name, struct.type, tokens[index])
+    struct.kind = kind.STRUCT
     index+=1
     if tokens[index][-1] == "{":
-        struct.block = parse_block(index, tokens)
+        index+=1
+        while tokens[index][-1] != "}":
+            current_name, index = parse_name(index, tokens)
+            struct.args.append(current_name)
+            index+=1
     else:
         parser_error(tokens[index], "Expected struct body")
+    str_info = struct_info()
+    sw_struct_info[f"%struct.{struct.name}"] = str_info
+    sw_struct_info[f"%struct.{struct.name}"].names = [x.name for x in struct.args]
+    sw_struct_info[f"%struct.{struct.name}"].types = [x.type for x in struct.args]
+    return struct, index+1
     
 
 @loud_call
@@ -455,7 +498,7 @@ def parse_str_literal(index: int, tokens: tuple[str, int, int, str]) -> tuple[st
 @loud_call
 def parse_var_decl(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     variable = statement()
-    variable.type = human_type.index(tokens[index][-1])
+    variable.type = human_type.index(tokens[index][-1]) # is always be true
     variable.kind = kind.VAR_DECL
     if variable.type == sw_type.VOID:
         if tokens[index+1][-1].isalnum():
@@ -464,7 +507,7 @@ def parse_var_decl(index: int, tokens: tuple[str, int, int, str]) -> tuple[state
     else:
         index+=1
         variable.name = tokens[index][-1]
-        if variable.name[0].isnumeric() or not uisalnum(variable.name):
+        if not tokenizable(variable.name):
             parser_error(tokens[index], "Token '&t' is not fit to be a variable name.")
         if variable.name in sw_builtins or variable.name in (human_intrinsic+human_branch+human_type):
             parser_error(tokens[index], "Token '&t' is a reserved keyword and cannot be a variable name.")
@@ -506,8 +549,14 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
     if operand.name == "=":
         operand.args, index = parse_body(index, tokens, ";")
     elif operand.name == "!":
-        current_stm, index = parse_statement(index, tokens);
+        current_stm, index = parse_statement(index, tokens)
         operand.args.append(current_stm)
+    elif operand.name == ".":
+        current_stm = statement()
+        current_stm.name = tokens[index][-1]
+        current_stm.kind = kind.STRUCT_REF
+        operand.args.append(current_stm)
+        index+=1
     else:
         arg_stm, index = parse_statement(index, tokens)
         if arg_stm:
@@ -570,6 +619,8 @@ def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tu
     index+=1
     function = statement()
     function.kind = kind.FUNC_EXT
+    if tokens[index][-1] not in human_type:
+        parser_error(tokens[index], "invalid typename for function")
     function.type = human_type.index(tokens[index][-1])
     index+=1
     function.name = tokens[index][-1]
@@ -613,6 +664,8 @@ def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tu
             if tokens[index][-1] != ",":
                 arg_stm = statement()
                 arg_stm.kind = kind.PLAIN_TYPE
+                if tokens[index][-1] not in human_type:
+                    parser_error(tokens[index][-1], "invalid type for function internation")
                 arg_stm.type = human_type.index(tokens[index][-1])
                 debug("Parsed:", tokens[index][-1])
                 function.args.append(arg_stm)
@@ -634,6 +687,8 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
     index+=1
     function = statement()
     function.kind = kind.FUNC_DECL
+    if tokens[index][-1] not in human_type:
+        parser_error("Invalid type name")
     function.type = human_type.index(tokens[index][-1])
     index+=1
     function.name = tokens[index][-1]
@@ -693,10 +748,25 @@ def out_write(line: str = "", level: int = 0):
 available_func = dict()
 available_func.update(sw_builtins)
 available_func.update(sw_declared_funcs)
+
+compile_stack = []
+def stacked_call(func):
+    def wrapper(*args, **kwargs):
+        ret = func(*args, *kwargs)
+        compile_stack.append(ret)
+        return ret
+    return wrapper
+
+@stacked_call
 def compile_statement(state, level: int = 0):
     nlevel = level+1
     type_liota = []
+    prev_ptr = iota(-1)-1
+    prev_iota = iota(-1)
     current_type_iota = None
+    prev_type = ""
+    if len(compile_stack):
+        prev_type = compile_stack[-1][1]
     match state.kind:
         case kind.EXPRESSION | kind.BLOCK:
             debug("Compiling function call:", state.name)
@@ -706,6 +776,25 @@ def compile_statement(state, level: int = 0):
                 arg_iota, arg_type = compile_statement(arg, level)
             return arg_iota, arg_type
         
+        case kind.STRUCT_REF:
+            reference_idx = sw_struct_info[prev_type].names.index(state.name)
+            ref_typename = llvm_type[sw_struct_info[prev_type].types[reference_idx]]
+            out_writeln(f"%{iota()} = getelementptr inbounds {prev_type}, ptr %{prev_ptr}, i32 0, i32 {reference_idx}", level)
+            out_writeln(f"%{iota()} = load {ref_typename}, ptr %{iota(-1)-1}", level)
+            return iota(-1), ref_typename
+        
+        case kind.STRUCT:
+            if level:
+                compiler_error(state, "struct definition must be global")
+            debug("Compiling struct", state.name)
+            out_write(f"%struct.{state.name} = type {{ ")
+            for idx, arg in enumerate(state.args):
+                if idx:
+                    out_write(", ")
+                out_write(llvm_type[arg.type])
+            out_writeln(" }\n")
+            return iota(-1), llvm_type[state.type]
+
         case kind.FUNC_CALL:
             debug("Compiling function call:", state.name)
             # out_writeln(f"; Function call: {state.name}", level)
@@ -736,6 +825,7 @@ def compile_statement(state, level: int = 0):
                     out_write(", ")
             len_args = len(state.args)
             out_writeln(")")
+            return iota(-1), prev_type
 
         case kind.FUNC_DECL:
             debug("Compiling function declaration:", state.name)
@@ -841,8 +931,6 @@ def compile_statement(state, level: int = 0):
         case kind.OPERAND:
             debug("Compiling operand:", state.name)
             # out_writeln(f"; Operand: {state.name}", level)
-            prev_ptr = iota(-1)-1
-            prev_iota = iota(-1)
             arg_type = "i64"
             arg_iota = None
             debug("len of args:", len(state.args))
@@ -852,7 +940,10 @@ def compile_statement(state, level: int = 0):
             for arg in state.args:
                 arg_iota, arg_type = compile_statement(arg, level)
             if state.name == "=":
-                out_writeln(f"store {arg_type} %{arg_iota}, ptr %{prev_ptr}", level)
+                if prev_type == arg_type:
+                    out_writeln(f"store {arg_type} %{arg_iota}, ptr %{prev_ptr}", level)
+                else:
+                    compiler_error(state, f"Types don't match: {human_type[llvm_type.index(prev_type)]} != {human_type[llvm_type.index(arg_type)]}")
             match state.name:
                 case "+":
                     out_writeln(f"%{iota()} = add {arg_type} %{prev_iota}, %{arg_iota}", level)
@@ -937,6 +1028,7 @@ def compile_statement(state, level: int = 0):
         case _:
             debug(f"SOMEHOW GOT HERE: {state.kind}")
             print_state((state,))
+    return prev_iota, prev_type
 
 out_writeln(f"""; FILE: {INFILE_PATH}
 

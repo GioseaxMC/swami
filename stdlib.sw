@@ -24,3 +24,4 @@ llvm "define ptr @ptradd(ptr %p, i64 %offset) {";
 llvm "  %result = getelementptr i8, ptr %p, i64 %offset";
 llvm "  ret ptr %result";
 llvm "}";
+llvm "";

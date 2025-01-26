@@ -1,10 +1,20 @@
 include "stdlib.sw";
 
+struct Person {
+    str name;
+    int age;
+}
+
 func void main(int argc, ptr argv) {
-	int idx = 0;
-	while (idx < argc) {
-		println(p_read(argv, idx))
-		idx++;
-	}
-	return;
+    Person person;
+
+    person.age = 17;
+    person.name = "GIOSE";
+
+    printf("%i", person.age)
+    println("")
+    printf("%s", person.name)
+    
+
+    return;
 }
