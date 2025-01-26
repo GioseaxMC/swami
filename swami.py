@@ -13,9 +13,11 @@ def iota(reset: int = 0):
     return iota_counter
 
 DEBUGGING = "-d" in argv
+DEB_LEVEL = 0
 def debug(*arguments) -> None:
     if not DEBUGGING:
         return
+    print("|  "*DEB_LEVEL, end="")
     for arg in arguments:
         print(arg, end=" ")
     print()
@@ -49,16 +51,15 @@ def get_tk_name(token: tuple[str, int, int, str]):
 def get_tk_pos(token: tuple[str, int, int, str]):
     return token[0]+":"+str(token[1]+1)+":"+str(token[2]+1)
 
-call_level = 0
 def loud_call(func):
-    global call_level;
+    global DEB_LEVEL;
     def wrapper(*args, **kwargs):
-        global call_level
-        call_level+=1
+        global DEB_LEVEL
         debug("[CALL]:", func.__name__)
+        DEB_LEVEL+=1
         ret = func(*args, **kwargs)
-        call_level-=1
-        debug("\\_ [ENDC]:", func.__name__)
+        DEB_LEVEL-=1
+        debug("[ENDC]:", func.__name__)
         return ret
     return wrapper
 
@@ -75,6 +76,9 @@ class kind:
     OPERAND = iota()
     BRANCH = iota()
     EXPRESSION = iota()
+    FUNC_EXT = iota()
+    PLAIN_TYPE = iota()
+    FUNC_INT = iota()
 
 @dataclass
 class sw_type:
@@ -94,7 +98,7 @@ human_type = [
     "char",
     "str",
     "bool",
-    "<->"
+    "//"
 ]
 
 llvm_type = [
@@ -104,7 +108,7 @@ llvm_type = [
     "i8",
     "i8*",
     "i1",   
-    "<->"
+    "..."
 ]
 
 def get_type(value: str) -> int:
@@ -113,7 +117,7 @@ def get_type(value: str) -> int:
     elif value[0] == "\"" and value[-1] == "\"":
         return sw_type.STR
     elif value[0] == "'" and value[-1] == "'":
-        return sw_type.CHAR
+        return sw_type.CHAfR
     else:
         return -1
 
@@ -129,6 +133,9 @@ human_kind = [
     "operand",
     "branch",
     "expression",
+    "function extern",
+    "plain typename",
+    "function intern",
 
     "-not assigned"
 ]
@@ -149,7 +156,7 @@ class INTRINSIC:
 human_intrinsic = [
     "return",
     "llvm",
-    "include"
+    "include",
 ]
 
 human_branch = [
@@ -179,7 +186,7 @@ def add_usr_func(name, type, token, length):
         sw_declared_funcs[name] = type
         sw_declared_args[name] = length
     else:
-        parser_error(token, "Redefinition of function '&t'")
+        parser_error(token, "Redefinition of function '&t'") # this
 
 def add_usr_var(name, type, token):
     global sw_declared_vars
@@ -285,6 +292,26 @@ class statement:
 
 statements: list[statement] = []
 
+def print_state(states: list[statement], level: int = 0):
+    nlevel = level+1
+    for state in states:
+        debug(f"{" "*level*2}Name:", state.name)
+        debug(f"{" "*level*2} -Type:", human_type[state.type])
+        debug(f"{" "*level*2} -Kind:", human_kind[state.kind])
+        debug(f"{" "*level*2} -Val :", state.value)
+        if len(state.args):
+            debug(f"{" "*level*2} -Args:")
+            try:
+                print_state(state.args, nlevel)
+            except Exception as e:
+                debug("Not printable:", e, state.args)
+        if state.block:
+            debug(f"{" "*level*2} -Block:")
+            try:
+                print_state([state.block,], nlevel)
+            except Exception as e:
+                debug("Not printable:", e, state.block)
+
 def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     current_tk = tokens[index+0][-1]
     ogToken = tokens[index]
@@ -293,11 +320,17 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
         case ";"|"," :
             return None, index+1
         case "func":
-            current_statement, index = parse_function_declaration(index+1, tokens)
+            current_statement, index = parse_function_declaration(index, tokens)
+        case "extern":
+            current_statement, index = parse_function_external(index, tokens)
+        case "intern":
+            current_statement, index = parse_function_internal(index, tokens)
         case "{":
             current_statement, index = parse_block(index+1, tokens)
         case "(":
             current_statement, index = parse_expression(index, tokens)
+        case "struct":
+            current_statement, index = parse_struct(index, tokens)
         case _:
             if current_tk[-1] == "\"" and current_tk[0] == "\"":
                 current_statement, index = parse_str_literal(index, tokens)
@@ -341,7 +374,20 @@ def parse_expression(index: int, tokens: tuple[str, int, int, str]) -> tuple[lis
     return expression, index
 
 @loud_call
+def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
+    index+=1
+    struct = statement()
+    struct.name = tokens[index][-1]
+    index+=1
+    if tokens[index][-1] == "{":
+        struct.block = parse_block(index, tokens)
+    else:
+        parser_error(tokens[index], "Expected struct body")
+    
+
+@loud_call
 def parse_body(index: int, tokens: tuple[str, int, int, str], stop_at, safefail_on="") -> tuple[list[statement], int]:
+    debug(f"[BLOCK]: starting with ({stop_at})")
     statements = []
     start = index-1
     while index < len(tokens) and tokens[index][-1] not in stop_at:
@@ -379,9 +425,7 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             inc_tokens = list(lex_lines(included_path))
             debug(inc_tokens, "\n\n")
             inc_statements, _ = parse_statements(0, inc_tokens)
-        debug("states before:", statements)
         statements += inc_statements
-        debug("states AFTER:", statements)
 
     else:
         intrinsic.name = tokens[index][-1]
@@ -427,6 +471,7 @@ def parse_var_decl(index: int, tokens: tuple[str, int, int, str]) -> tuple[state
         add_usr_var(variable.name, variable.type, tokens[index])
         index+=1
         if tokens[index][-1] == "=":
+            debug("[VARDECL]: Detected equal sign, parsing with ;")
             index+=1
             debug("var_decl: Trying to parse", tokens[index][-1], "at", index)
             variable.args, index = parse_body(index, tokens, ";")
@@ -460,7 +505,7 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
     debug("operand: Trying to parse", tokens[index][-1], "at", index)
     if operand.name == "=":
         operand.args, index = parse_body(index, tokens, ";")
-    if operand.name == "!":
+    elif operand.name == "!":
         current_stm, index = parse_statement(index, tokens);
         operand.args.append(current_stm)
     else:
@@ -521,7 +566,72 @@ def parse_function_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     return function, index+1
 
 @loud_call
+def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    index+=1
+    function = statement()
+    function.kind = kind.FUNC_EXT
+    function.type = human_type.index(tokens[index][-1])
+    index+=1
+    function.name = tokens[index][-1]
+    name_index = index
+    index+=1
+    if tokens[index][-1] == "(":
+        index+=1
+        while tokens[index][-1] != ")":
+            if tokens[index][-1] != ",":
+                arg_stm = statement()
+                arg_stm.kind = kind.PLAIN_TYPE
+                arg_stm.type = human_type.index(tokens[index][-1])
+                debug("Parsed:", tokens[index][-1])
+                function.args.append(arg_stm)
+            index+=1
+        for arg in function.args:
+            if arg.type == sw_type.VOID:
+                parser_error(tokens[name_index], "In function extern '&t': cannot have 'void' as input type")
+        if function.args[-1].type == 6:
+            arg_len = -1
+        else:
+            arg_len = len(function.args)
+        add_usr_func(function.name, function.type, tokens[name_index], arg_len)
+    else:
+        parser_error(tokens[index], "Missing arguments for function '&t'")
+    return function, index+1
+
+@loud_call
+def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    index+=1
+    function = statement()
+    function.kind = kind.FUNC_INT
+    function.type = human_type.index(tokens[index][-1])
+    index+=1
+    function.name = tokens[index][-1]
+    name_index = index
+    index+=1
+    if tokens[index][-1] == "(":
+        index+=1
+        while tokens[index][-1] != ")":
+            if tokens[index][-1] != ",":
+                arg_stm = statement()
+                arg_stm.kind = kind.PLAIN_TYPE
+                arg_stm.type = human_type.index(tokens[index][-1])
+                debug("Parsed:", tokens[index][-1])
+                function.args.append(arg_stm)
+            index+=1
+        for arg in function.args:
+            if arg.type == sw_type.VOID:
+                parser_error(tokens[name_index], "In function intern '&t': cannot have 'void' as input type")
+        if function.args[-1].type == 6:
+            arg_len = -1
+        else:
+            arg_len = len(function.args)
+        add_usr_func(function.name, function.type, tokens[name_index], arg_len)
+    else:
+        parser_error(tokens[index], "Missing arguments for internal function '&t'")
+    return function, index+1
+
+@loud_call
 def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    index+=1
     function = statement()
     function.kind = kind.FUNC_DECL
     function.type = human_type.index(tokens[index][-1])
@@ -547,7 +657,10 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
         function.block, index = parse_block(index+1, tokens)
         if not len(function.block.args):
             parser_error(tokens[block_start], "Empty block is not allowed")
-        if function.block.args[-1].kind != kind.INTRINSIC or function.block.args[-1].name != "return":
+        # if DEBUGGING:
+        #     print_state(function.block.args)
+        if function.block.args[-1].kind != kind.INTRINSIC: #or function.block.args[-1].name != "return":
+            debug(human_kind[function.block.args[-1].kind])
             parser_error(tokens[index-1], "Function must always end with return")
         function.block.args[-1].type = function.type
     else:
@@ -563,25 +676,6 @@ if not len(statements):
     parser_error((INFILE_PATH,0,2,""), "No statements found in the file, consider creating a main entry point.\n\n    - Are you happy now, Rexim?\n\n    expected:\n\n    func int main() {\n      return 0;\n    }")
 if "main" not in sw_declared_funcs:
     parser_error((INFILE_PATH,0,0,""), "No main entry point found in the file, consider creating a main entry point.\n\n    expected:\n\n    func int main() {\n      return 0;\n    }")
-def print_state(states: list[statement], level: int = 0):
-    nlevel = level+1
-    for state in states:
-        debug(f"{" "*level*2}Name:", state.name)
-        debug(f"{" "*level*2} -Type:", human_type[state.type])
-        debug(f"{" "*level*2} -Kind:", human_kind[state.kind])
-        debug(f"{" "*level*2} -Val :", state.value)
-        if len(state.args):
-            debug(f"{" "*level*2} -Args:")
-            try:
-                print_state(state.args, nlevel)
-            except Exception as e:
-                debug("Not printable:", e, state.args)
-        if state.block:
-            debug(f"{" "*level*2} -Block:")
-            try:
-                print_state([state.block,], nlevel)
-            except Exception as e:
-                debug("Not printable:", e, state.block)
 
 print_state(statements)
 for key, type in sw_declared_vars.items():
@@ -630,12 +724,25 @@ def compile_statement(state, level: int = 0):
             out_writeln(")")
             return iota(-1), llvm_type[available_func[state.name]]
         
+        case kind.FUNC_EXT:
+            debug("Compiling function external:", state.name)
+            # out_writeln(f"; Function declaration: {state.name}", level)
+            if level:
+                compiler_error(state, "Function externing cannot be nested")
+            out_write(f"declare {llvm_type[state.type]} @{state.name}(")
+            for idx, arg in enumerate(state.args):
+                out_write(f"{llvm_type[arg.type]}")
+                if idx+1 != len(state.args):
+                    out_write(", ")
+            len_args = len(state.args)
+            out_writeln(")")
+
         case kind.FUNC_DECL:
             debug("Compiling function declaration:", state.name)
             # out_writeln(f"; Function declaration: {state.name}", level)
             if level:
                 compiler_error(state, "Function declaration cannot be nested")
-            out_write(f"\ndefine {llvm_type[state.type]} @{state.name}(", level)
+            out_write(f"define {llvm_type[state.type]} @{state.name}(")
             for idx, arg in enumerate(state.args):
                 out_write(f"{llvm_type[arg.type]} %{iota()}")
                 if idx+1 != len(state.args):
@@ -648,7 +755,7 @@ def compile_statement(state, level: int = 0):
             for stm in state.block.args:
                 compile_statement(stm, nlevel)
             # out_writeln("ret i64 0", nlevel)
-            out_write("}\n")
+            out_writeln("\n}\n")
             return iota(-1), llvm_type[state.type]
         
         case kind.INT_LITER:
@@ -729,7 +836,7 @@ def compile_statement(state, level: int = 0):
                     debug("Compiling INCLUDE instrinsic:", state.name)
                     if not len(state.args):
                         compiler_error(state, f"No file path provided for '&t' intrinsic")
-            return iota(), arg_type
+            return iota(-1), arg_type
 
         case kind.OPERAND:
             debug("Compiling operand:", state.name)
@@ -825,6 +932,8 @@ def compile_statement(state, level: int = 0):
             else:
                 compiler_error(state, "Branch '&t' is not implemented yet")
             return iota(-1), arg_type
+        case kind.FUNC_INT:
+            ...
         case _:
             debug(f"SOMEHOW GOT HERE: {state.kind}")
             print_state((state,))
@@ -854,5 +963,7 @@ out_writeln(f"@newl = constant [2 x i8] c\"\\0A\\00\"")
 #     out_writeln(f"@{key} = global {llvm_type[arg_type]} 0")
 
 out.close()
+
+debug("[COMPILATION] : Finished")
 
 os.system(f"clang {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module -target x86_64-64w-mingw32")
