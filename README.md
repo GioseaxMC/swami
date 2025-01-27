@@ -19,7 +19,7 @@ func int main() {
 }
 ```
 ### Commands:
-```bash
+```
 $ python swami.py main.sw -o main
 $ main
 Hello World!
