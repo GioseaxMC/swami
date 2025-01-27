@@ -2,11 +2,11 @@
 ## Desc
 A low level, compiled language written in python
 ## Goals
-- [ ] Statically typed
-- [ ] Turing Completeness
+- [x] Convenient
+- [x] Statically typed
+- [ ] Turing Completeness (it is, but i didn't prove it yet)
 - [ ] Self Hosted
 - [ ] Natively compiled
-- [ ] Convenient
 ## Dependencies
 - Clang's LLVM
 - Any C target (such as mingw32 or msvc)
