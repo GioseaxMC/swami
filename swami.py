@@ -665,7 +665,7 @@ def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tu
                 arg_stm = statement()
                 arg_stm.kind = kind.PLAIN_TYPE
                 if tokens[index][-1] not in human_type:
-                    parser_error(tokens[index][-1], "invalid type for function internation")
+                    parser_error(tokens[index], "invalid type for function internation")
                 arg_stm.type = human_type.index(tokens[index][-1])
                 debug("Parsed:", tokens[index][-1])
                 function.args.append(arg_stm)
@@ -688,7 +688,7 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
     function = statement()
     function.kind = kind.FUNC_DECL
     if tokens[index][-1] not in human_type:
-        parser_error("Invalid type name")
+        parser_error(tokens[index], "Invalid type name")
     function.type = human_type.index(tokens[index][-1])
     index+=1
     function.name = tokens[index][-1]

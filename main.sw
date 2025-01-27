@@ -5,11 +5,11 @@ struct Person {
     int age;
 }
 
-func void main(int argc, ptr argv) {
+func void main() {
     Person person;
 
     person.age = 17;
-    person.name = "GIOSE";
+    person.name = 0;
 
     printf("%i", person.age)
     println("")
@@ -18,3 +18,6 @@ func void main(int argc, ptr argv) {
 
     return;
 }
+
+
+
