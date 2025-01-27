@@ -1,23 +1,23 @@
 include "stdlib.sw";
 
 struct Person {
-    str name;
     int age;
+    str name;
 }
 
 func void main() {
-    Person person;
 
-    person.age = 17;
-    person.name = 0;
-
-    printf("%i", person.age)
-    println("")
-    printf("%s", person.name)
+    int a;
+    ptr int aa;
     
-
+    char b;
+    ptr char bb;
+    
+    str c;
+    ptr str cc;
+    
+    ptr void e;
+    ptr ptr void ee;
+    
     return;
 }
-
-
-

@@ -81,6 +81,9 @@ class kind:
     FUNC_INT = iota()
     STRUCT = iota()
     STRUCT_REF = iota()
+    SBRA = iota()
+
+stoppers = [";)}"]
 
 @dataclass
 class sw_type:
@@ -91,8 +94,6 @@ class sw_type:
     STR  = iota()
     BOOL  = iota()
 
-stoppers = [";)}"]
-
 human_type = [
     "ptr",
     "int",
@@ -100,7 +101,7 @@ human_type = [
     "char",
     "str",
     "bool",
-    "//"
+    "//",
 ]
 
 llvm_type = [
@@ -109,8 +110,8 @@ llvm_type = [
     "void",
     "i8",
     "i8*",
-    "i1",   
-    "..."
+    "i1",
+    "...",
 ]
 
 def get_type(value: str) -> int:
@@ -138,6 +139,7 @@ human_kind = [
     "function extern",
     "plain typename",
     "function intern",
+    "square brackets",
 
     "-not assigned"
 ]
@@ -174,12 +176,18 @@ llvm_intrinsic = [
 ]
 
 sw_declared_funcs = dict()
-sw_declared_args = {
+sw_declared_funcs_pevel = {
+    "printf" : 0,
+    "println" : 0,
+    "print" : 0
+}
+sw_declared_funcs_args = {
     "printf" : -1,
     "println" : 1,
     "print" : 1
 } # maybe for future use \ no wayy
 sw_declared_vars  = dict()
+sw_declared_vars_pevel  = dict()
 sw_declared_v_lvl = dict()
 sw_struct_info = dict()
 @dataclass
@@ -187,18 +195,20 @@ class struct_info:
     names = []
     types = []
 
-def add_usr_func(name, type, token, length):
+def add_usr_func(name, type, ptr_level, token, length):
     global sw_declared_funcs
     if name not in sw_declared_funcs:
         sw_declared_funcs[name] = type
-        sw_declared_args[name] = length
+        sw_declared_funcs_args[name] = length
+        sw_declared_funcs_pevel[name] = ptr_level
     else:
         parser_error(token, "Redefinition of function '&t'") # this
 
-def add_usr_var(name, type, token):
+def add_usr_var(name, type, ptr_level, token):
     global sw_declared_vars
     if name not in sw_declared_vars:
         sw_declared_vars[name] = type
+        sw_declared_vars_pevel[name] = ptr_level
     else:
         parser_error(token, "Redefinition of variable '&t'")
 
@@ -295,6 +305,7 @@ class statement:
         self.name = ""
         self.kind = -1
         self.type = -1
+        self.ptr_level = 0
         self.subtype = -1
         self.args = []
         self.block = None
@@ -384,19 +395,43 @@ def parse_expression(index: int, tokens: tuple[str, int, int, str]) -> tuple[lis
     return expression, index
 
 @loud_call
-def parse_name(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
+def parse_sbrackets(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
+    if tokens[index][-1] != "[":
+        parser_error(tokens[index], "Expected '[', found '&t', instead")
+    index+=1
+    expression = statement()
+    while tokens[index][-1] != "]":
+        current_arg, index = parse_body(index, tokens, ",", "]")
+        expression.args.append(current_arg)
+    index+=1
+    return expression, index
+
+@loud_call
+def parse_structattr(index: int, tokens: tuple[str, int, int, str]) -> tuple[list[statement], int]:
     name = statement()
     if tokens[index][-1] not in human_type:
         parser_error(tokens[index], "invalid typename for struct attribute")
-    name.type = human_type.index(tokens[index][-1])
-    index+=1
+    name.type, name.ptr_level, index = parse_typename(index, tokens)
     name.name = tokens[index][-1]
     if not tokenizable(name.name):
         parser_error(tokens[index], "'&t' is not a valid struct attribute name")
     index+=1
     if tokens[index][-1] != ";":
-        parser_error(tokens[index-1], "Expected ':' after attribute name")
+        parser_error(tokens[index-1], "Expected ';' after attribute name")
     return name, index
+
+def parse_typename(index: int, tokens: tuple[str, int, int, str], level = 0) -> tuple[int, int]:
+    debug("typeparting", tokens[index][-1])
+    if tokens[index][-1] not in human_type:
+        parser_error(tokens[index], "'&t' is not a valid type.")
+    type = human_type.index(tokens[index][-1])
+    index+=1
+    if type == sw_type.VOID and level:
+        return sw_type.CHAR, level, index
+    if type == sw_type.PTR:
+        type, level, index = parse_typename(index, tokens, level+1)
+        return type, level, index
+    return type, level, index
 
 
 @loud_call
@@ -410,13 +445,13 @@ def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[stateme
         parser_error(tokens[index], "Token '&t' is a reserved keyword and cannot be a struct name.")
     human_type.append(struct.name)
     llvm_type.append(f"%struct.{struct.name}")
-    add_usr_var(struct.name, struct.type, tokens[index])
+    # add_usr_var(struct.name, struct.type, tokens[index]) # TODO: WHY IS THIS HERE
     struct.kind = kind.STRUCT
     index+=1
     if tokens[index][-1] == "{":
         index+=1
         while tokens[index][-1] != "}":
-            current_name, index = parse_name(index, tokens)
+            current_name, index = parse_structattr(index, tokens)
             struct.args.append(current_name)
             index+=1
     else:
@@ -498,20 +533,19 @@ def parse_str_literal(index: int, tokens: tuple[str, int, int, str]) -> tuple[st
 @loud_call
 def parse_var_decl(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     variable = statement()
-    variable.type = human_type.index(tokens[index][-1]) # is always be true
+    variable.type, variable.ptr_level, index = parse_typename(index, tokens) # is always be true
     variable.kind = kind.VAR_DECL
-    if variable.type == sw_type.VOID:
+    if variable.type == sw_type.VOID and not variable.ptr_level:
         if tokens[index+1][-1].isalnum():
             parser_error(tokens[index], "type void cannot describe a value")
-        index+=1
     else:
-        index+=1
         variable.name = tokens[index][-1]
+        debug(f"VARIABLE: name: {variable.name} type: {llvm_type[variable.type] + "*"*variable.ptr_level}")
         if not tokenizable(variable.name):
             parser_error(tokens[index], "Token '&t' is not fit to be a variable name.")
         if variable.name in sw_builtins or variable.name in (human_intrinsic+human_branch+human_type):
             parser_error(tokens[index], "Token '&t' is a reserved keyword and cannot be a variable name.")
-        add_usr_var(variable.name, variable.type, tokens[index])
+        add_usr_var(variable.name, variable.type, variable.ptr_level, tokens[index])
         index+=1
         if tokens[index][-1] == "=":
             debug("[VARDECL]: Detected equal sign, parsing with ;")
@@ -604,11 +638,11 @@ def parse_function_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[
             current_exp = statement()
             current_exp.args, index = parse_body(index, tokens, ",", ")")
             function.args.append(current_exp)
-        if sw_declared_args[function.name] != -1 and len(function.args) != sw_declared_args[function.name]:
+        if sw_declared_funcs_args[function.name] != -1 and len(function.args) != sw_declared_funcs_args[function.name]:
             if len(function.args) == 1:
-                parser_error(tokens[name_index], f"Function '&t' takes exactly {sw_declared_args[function.name]} argument(s) but 1 was given")
+                parser_error(tokens[name_index], f"Function '&t' takes exactly {sw_declared_funcs_args[function.name]} argument(s) but 1 was given")
             else:
-                parser_error(tokens[name_index], f"Function '&t' takes exactly {sw_declared_args[function.name]} argument(s) but {len(function.args)} were given")
+                parser_error(tokens[name_index], f"Function '&t' takes exactly {sw_declared_funcs_args[function.name]} argument(s) but {len(function.args)} were given")
                 
     else:
         parser_error(tokens[index], "Missing arguments for function '&t'")
@@ -621,8 +655,7 @@ def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tu
     function.kind = kind.FUNC_EXT
     if tokens[index][-1] not in human_type:
         parser_error(tokens[index], "invalid typename for function")
-    function.type = human_type.index(tokens[index][-1])
-    index+=1
+    function.type, function.ptr_level, index = parse_typename(index, tokens)
     function.name = tokens[index][-1]
     name_index = index
     index+=1
@@ -632,7 +665,7 @@ def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tu
             if tokens[index][-1] != ",":
                 arg_stm = statement()
                 arg_stm.kind = kind.PLAIN_TYPE
-                arg_stm.type = human_type.index(tokens[index][-1])
+                arg_stm.type, arg_stm.ptr_level, index = parse_typename(index, tokens)
                 debug("Parsed:", tokens[index][-1])
                 function.args.append(arg_stm)
             index+=1
@@ -643,7 +676,7 @@ def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tu
             arg_len = -1
         else:
             arg_len = len(function.args)
-        add_usr_func(function.name, function.type, tokens[name_index], arg_len)
+        add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], arg_len)
     else:
         parser_error(tokens[index], "Missing arguments for function '&t'")
     return function, index+1
@@ -653,8 +686,7 @@ def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tu
     index+=1
     function = statement()
     function.kind = kind.FUNC_INT
-    function.type = human_type.index(tokens[index][-1])
-    index+=1
+    function.type, function.ptr_level, index = parse_typename(index, tokens)
     function.name = tokens[index][-1]
     name_index = index
     index+=1
@@ -665,11 +697,12 @@ def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tu
                 arg_stm = statement()
                 arg_stm.kind = kind.PLAIN_TYPE
                 if tokens[index][-1] not in human_type:
-                    parser_error(tokens[index], "invalid type for function internation")
-                arg_stm.type = human_type.index(tokens[index][-1])
-                debug("Parsed:", tokens[index][-1])
+                    parser_error(tokens[name_index], "invalid type for function internation '&t'")
+                arg_stm.type, arg_stm.ptr_level, index = parse_typename(index, tokens)
+                debug(".NEXT UP:", tokens[index][-1])
                 function.args.append(arg_stm)
-            index+=1
+            else:
+                index+=1
         for arg in function.args:
             if arg.type == sw_type.VOID:
                 parser_error(tokens[name_index], "In function intern '&t': cannot have 'void' as input type")
@@ -677,9 +710,9 @@ def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tu
             arg_len = -1
         else:
             arg_len = len(function.args)
-        add_usr_func(function.name, function.type, tokens[name_index], arg_len)
+        add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], arg_len)
     else:
-        parser_error(tokens[index], "Missing arguments for internal function '&t'")
+        parser_error(tokens[name_index], "Missing arguments for internal function '&t'")
     return function, index+1
 
 @loud_call
@@ -689,8 +722,7 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
     function.kind = kind.FUNC_DECL
     if tokens[index][-1] not in human_type:
         parser_error(tokens[index], "Invalid type name")
-    function.type = human_type.index(tokens[index][-1])
-    index+=1
+    function.type, function.ptr_level, index = parse_typename(index, tokens)
     function.name = tokens[index][-1]
     name_index = index
     index+=1
@@ -699,7 +731,7 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
         for arg in function.args:
             if arg.type == sw_type.VOID:
                 parser_error(tokens[name_index], "In function declaration '&t', cannot have 'void' as input type")
-        add_usr_func(function.name, function.type, tokens[name_index], len(function.args))
+        add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], len(function.args))
     else:
         parser_error(tokens[index], "Missing arguments for function '&t'")
     
@@ -718,6 +750,7 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
             debug(human_kind[function.block.args[-1].kind])
             parser_error(tokens[index-1], "Function must always end with return")
         function.block.args[-1].type = function.type
+        function.block.args[-1].ptr_level = function.ptr_level
     else:
         parser_error(tokens[index], "Function body MUST be a block: {}")
     return function, index
@@ -757,31 +790,36 @@ def stacked_call(func):
         return ret
     return wrapper
 
+def rlt(type: int, ptr_level: int):
+    return llvm_type[type] + ("*"*ptr_level)
+
 @stacked_call
-def compile_statement(state, level: int = 0):
+def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
     nlevel = level+1
     type_liota = []
     prev_ptr = iota(-1)-1
-    prev_iota = iota(-1)
     current_type_iota = None
-    prev_type = ""
+    prev_iota = iota(-1)
+    prev_type = 0
+    prev_ptrl = 0
     if len(compile_stack):
-        prev_type = compile_stack[-1][1]
+        prev_iota, prev_type, prev_ptrl = compile_stack[-1]
     match state.kind:
         case kind.EXPRESSION | kind.BLOCK:
             debug("Compiling function call:", state.name)
             # out_writeln(f"; Function call: {state.name}", level)
             for arg in state.args:
                 debug(f"EXP:BLK: arg.kind: {human_kind[arg.kind]}")
-                arg_iota, arg_type = compile_statement(arg, level)
-            return arg_iota, arg_type
+                arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
+            return arg_iota, arg_type, arg_ptrl
         
         case kind.STRUCT_REF:
-            reference_idx = sw_struct_info[prev_type].names.index(state.name)
-            ref_typename = llvm_type[sw_struct_info[prev_type].types[reference_idx]]
+            reference_idx = sw_struct_info[prev_type].names.index(state.name) # struct name types index
+            ref_type = sw_struct_info[prev_type].types[reference_idx] # struct attr type
+            ref_typename = llvm_type[ref_type] # struct attr typename
             out_writeln(f"%{iota()} = getelementptr inbounds {prev_type}, ptr %{prev_ptr}, i32 0, i32 {reference_idx}", level)
             out_writeln(f"%{iota()} = load {ref_typename}, ptr %{iota(-1)-1}", level)
-            return iota(-1), ref_typename
+            return iota(-1), ref_type, state.ptr_level
         
         case kind.STRUCT:
             if level:
@@ -791,9 +829,9 @@ def compile_statement(state, level: int = 0):
             for idx, arg in enumerate(state.args):
                 if idx:
                     out_write(", ")
-                out_write(llvm_type[arg.type])
+                out_write(rlt(arg.type, arg.ptr_level))
             out_writeln(" }\n")
-            return iota(-1), llvm_type[state.type]
+            return compile_stack[-1]
 
         case kind.FUNC_CALL:
             debug("Compiling function call:", state.name)
@@ -806,59 +844,59 @@ def compile_statement(state, level: int = 0):
                 out_write(f"call void @{state.name}(", level)
             else:
                 out_write(f"%{iota()} = call {llvm_type[available_func[state.name]]} @{state.name}(", level)
-            for idx, (arg_iota, arg_type) in enumerate(type_liota):
+            for idx, (arg_iota, arg_type, arg_ptrl) in enumerate(type_liota):
                 if idx:
                     out_write(", ")
-                out_write(f"{arg_type} %{arg_iota}")
+                out_write(f"{rlt(arg_type, arg_ptrl)} %{arg_iota}")
             out_writeln(")")
-            return iota(-1), llvm_type[available_func[state.name]]
+            return iota(-1), available_func[state.name], sw_declared_funcs_pevel[state.name]
         
         case kind.FUNC_EXT:
             debug("Compiling function external:", state.name)
             # out_writeln(f"; Function declaration: {state.name}", level)
             if level:
                 compiler_error(state, "Function externing cannot be nested")
-            out_write(f"declare {llvm_type[state.type]} @{state.name}(")
+            out_write(f"declare {rlt(state.type, state.ptr_level)} @{state.name}(")
             for idx, arg in enumerate(state.args):
-                out_write(f"{llvm_type[arg.type]}")
+                out_write(f"{rlt(arg.type, arg.ptr_level)}")
                 if idx+1 != len(state.args):
                     out_write(", ")
             len_args = len(state.args)
             out_writeln(")")
-            return iota(-1), prev_type
+            return compile_stack[-1]
 
         case kind.FUNC_DECL:
             debug("Compiling function declaration:", state.name)
             # out_writeln(f"; Function declaration: {state.name}", level)
             if level:
                 compiler_error(state, "Function declaration cannot be nested")
-            out_write(f"define {llvm_type[state.type]} @{state.name}(")
+            out_write(f"define {rlt(state.type, state.ptr_level)} @{state.name}(")
             for idx, arg in enumerate(state.args):
-                out_write(f"{llvm_type[arg.type]} %{iota()}")
+                out_write(f"{rlt(arg.type, arg.ptr_level)} %{iota()}")
                 if idx+1 != len(state.args):
                     out_write(", ")
             len_args = len(state.args)
             out_write(") {\n")
             for idx, arg in enumerate(state.args):
-                out_writeln(f"%{arg.name} = alloca {llvm_type[arg.type]}", nlevel)
-                out_writeln(f"store {llvm_type[arg.type]} %{iota()-len_args}, ptr %{arg.name}", nlevel)
+                out_writeln(f"%{arg.name} = alloca {rlt(arg.type, arg.ptr_level)}", nlevel)
+                out_writeln(f"store {rlt(arg.type, arg.ptr_level)} %{iota()-len_args}, ptr %{arg.name}", nlevel)
             for stm in state.block.args:
                 compile_statement(stm, nlevel)
             # out_writeln("ret i64 0", nlevel)
             out_writeln("\n}\n")
-            return iota(-1), llvm_type[state.type]
+            return iota(-1), state.type, state.ptr_level
         
         case kind.INT_LITER:
             debug("Compiling int literal:", state.value)
             # out_writeln(f"; Int literal: {state.value}", level)
             out_writeln(f"%{iota()} = add i64 {state.value}, 0", level)
-            return iota(-1), llvm_type[sw_type.INT]
+            return iota(-1), sw_type.INT, 0
         
         case kind.STR_LITER:
             debug("Compiling string literal:", state.name)
             # out_writeln(f"; Str literal: {state.name}", level)
             out_writeln(f"%{iota()} = load ptr, ptr @{state.name}.ptr", level)
-            return iota(-1), llvm_type[sw_type.STR]
+            return iota(-1), sw_type.CHAR, 1
         
         case kind.VAR_DECL:
             debug("Compiling variable declaration:", state.name)
@@ -866,34 +904,34 @@ def compile_statement(state, level: int = 0):
             sw_declared_v_lvl[state.name] = level
             if level == 0:
                 if state.value:
-                    out_writeln(f"@{state.name} = global {llvm_type[state.type]} {state.value}")
+                    out_writeln(f"@{state.name} = global {rlt(state.type, state.ptr_level)} {state.value}")
                 else:
-                    out_writeln(f"@{state.name} = global {llvm_type[state.type]} 0")
+                    out_writeln(f"@{state.name} = global {rlt(state.type, state.ptr_level)} 0")
             else:
-                out_writeln(f"%{state.name} = alloca {llvm_type[state.type]}", level)
+                out_writeln(f"%{state.name} = alloca {rlt(state.type, state.ptr_level)}", level)
                 for arg in state.args:
-                    arg_iota, arg_type = compile_statement(arg, level)
+                    arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
                 if len(state.args):
-                    if arg_type != llvm_type[state.type]:
-                        compiler_error(state, f"Declared as '{human_type[state.type]}' but received '{human_type[llvm_type.index(arg_type)]}'")
-                    out_writeln(f"store {arg_type} %{arg_iota}, ptr %{state.name}", level)
-            return iota(-1), llvm_type[state.type]
+                    if (arg_type, arg_ptrl) != (state.type, state.ptrl):
+                        compiler_error(state, f"Declared as '{"ptr "*state.ptr_level}{human_type[state.type]}' but received '{"ptr "*arg_ptrl}{human_type[arg_type]}'")
+                    out_writeln(f"store {rlt(arg_type, arg_ptrl)} %{arg_iota}, ptr %{state.name}", level)
+            return iota(-1), state.type, state.ptr_level
                 
         case kind.VAR_REF:
             debug("Compiling variable reference:", state.name)
             # out_writeln(f"; Variable reference: {state.name}", level)
             if sw_declared_v_lvl.get(state.name) == 0:
                 out_writeln(f"%{iota()} = bitcast ptr @{state.name} to ptr", level)
-                out_writeln(f"%{iota()} = load {llvm_type[sw_declared_vars[state.name]]}, ptr %{iota(-1)-1}", level)
+                out_writeln(f"%{iota()} = load {rlt(sw_declared_vars[state.name], sw_declared_funcs_pevel[state.name])}, ptr %{iota(-1)-1}", level)
             else:
                 out_writeln(f"%{iota()} = bitcast ptr %{state.name} to ptr", level)
-                out_writeln(f"%{iota()} = load {llvm_type[sw_declared_vars[state.name]]}, ptr %{iota(-1)-1}", level)
-            return iota(-1), llvm_type[sw_declared_vars[state.name]]
+                out_writeln(f"%{iota()} = load {rlt(sw_declared_vars[state.name], sw_declared_funcs_pevel[state.name])}, ptr %{iota(-1)-1}", level)
+            return iota(-1), sw_declared_vars[state.name], sw_declared_funcs_pevel[state.name]
         
         case kind.INTRINSIC:
+            arg_type, arg_ptrl = 0, 0
             debug("Compiling intrinsic:", state.name)
             # out_writeln(f"; Intrinsic: {state.name}", level)
-            arg_type = "-none"
             match state.subkind:
                 case INTRINSIC.RET:
                     if state.type == sw_type.VOID:
@@ -909,12 +947,12 @@ def compile_statement(state, level: int = 0):
                     out_write(f"ret ", level)
                     if state.type == sw_type.VOID:
                         out_write("void ")
-                        arg_type = llvm_type[sw_type.VOID]
+                        arg_type = sw_type.VOID
                     else:
-                        arg_iota, arg_type = current_type_iota
-                        if llvm_type.index(arg_type) != state.type:
-                            compiler_error(state, f"function and return types don't match: {llvm_type[state.type]} != {arg_type}")
-                        out_write(f"{arg_type} %{arg_iota} ")
+                        arg_iota, arg_type, arg_ptrl = current_type_iota
+                        if arg_type != state.type:
+                            compiler_error(state, f"function and return types don't match: {rlt(state.type, state.ptr_level)} != {rlt(arg_type, arg_ptrl)}")
+                        out_write(f"{rlt(arg_type, arg_ptrl)} %{arg_iota} ")
                         out_writeln("")
                 case INTRINSIC.LLVM:
                     debug("Compiling LLVM intrinsic:", state.name)
@@ -926,33 +964,32 @@ def compile_statement(state, level: int = 0):
                     debug("Compiling INCLUDE instrinsic:", state.name)
                     if not len(state.args):
                         compiler_error(state, f"No file path provided for '&t' intrinsic")
-            return iota(-1), arg_type
+            return iota(-1), arg_type, arg_ptrl
 
         case kind.OPERAND:
             debug("Compiling operand:", state.name)
             # out_writeln(f"; Operand: {state.name}", level)
-            arg_type = "i64"
-            arg_iota = None
+
             debug("len of args:", len(state.args))
             if len(state.args):
                 for arg in state.args:
                     debug(arg)
             for arg in state.args:
-                arg_iota, arg_type = compile_statement(arg, level)
+                arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
             if state.name == "=":
                 if prev_type == arg_type:
-                    out_writeln(f"store {arg_type} %{arg_iota}, ptr %{prev_ptr}", level)
+                    out_writeln(f"store {rlt(arg_type, arg_ptrl)} %{arg_iota}, ptr %{prev_ptr}", level)
                 else:
-                    compiler_error(state, f"Types don't match: {human_type[llvm_type.index(prev_type)]} != {human_type[llvm_type.index(arg_type)]}")
+                    compiler_error(state, f"Types don't match: {human_type[prev_type]} != {human_type[arg_type]}")
             match state.name:
                 case "+":
-                    out_writeln(f"%{iota()} = add {arg_type} %{prev_iota}, %{arg_iota}", level)
+                    out_writeln(f"%{iota()} = add {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
                 case "-":
-                    out_writeln(f"%{iota()} = sub {arg_type} %{prev_iota}, %{arg_iota}", level)
+                    out_writeln(f"%{iota()} = sub {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
                 case "*":
-                    out_writeln(f"%{iota()} = mul {arg_type} %{prev_iota}, %{arg_iota}", level)
+                    out_writeln(f"%{iota()} = mul {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
                 case "/":
-                    out_writeln(f"%{iota()} = sdiv {arg_type} %{prev_iota}, %{arg_iota}", level)
+                    out_writeln(f"%{iota()} = sdiv {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
                 case "++":
                     out_writeln(f"%{iota()} = add i64 %{prev_iota}, 1", level)
                     out_writeln(f"store i64 %{iota(-1)}, ptr %{prev_ptr}", level)
@@ -960,41 +997,41 @@ def compile_statement(state, level: int = 0):
                     out_writeln(f"%{iota()} = sub i64 %{prev_iota}, 1", level)
                     out_writeln(f"store i64 %{iota(-1)}, ptr %{prev_ptr}", level)
                 case ">":
-                    out_writeln(f"%{iota()} = icmp sgt {arg_type} %{prev_iota}, %{arg_iota}", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    out_writeln(f"%{iota()} = icmp sgt {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
+                    arg_type = sw_type.BOOL
                 case "<=":
-                    out_writeln(f"%{iota()} = icmp sgt {arg_type} %{prev_iota}, %{arg_iota}", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    out_writeln(f"%{iota()} = icmp sgt {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
+                    arg_type = sw_type.BOOL
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    arg_type = sw_type.BOOL
                 case "<":
-                    out_writeln(f"%{iota()} = icmp slt {arg_type} %{prev_iota}, %{arg_iota}", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    out_writeln(f"%{iota()} = icmp slt {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
+                    arg_type = sw_type.BOOL
                 case ">=":
-                    out_writeln(f"%{iota()} = icmp slt {arg_type} %{prev_iota}, %{arg_iota}", level)
+                    out_writeln(f"%{iota()} = icmp slt {rlt(arg_type, arg_ptrl)} %{prev_iota}, %{arg_iota}", level)
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    arg_type = sw_type.BOOL
                 case "!":
-                    out_writeln(f"%{iota()} = xor {arg_type} %{arg_iota}, true", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    out_writeln(f"%{iota()} = xor {rlt(arg_type, arg_ptrl)} %{arg_iota}, true", level)
+                    arg_type = sw_type.BOOL
                 case "==":
-                    out_writeln(f"%{iota()} = icmp eq {arg_type}, %{prev_iota}", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    out_writeln(f"%{iota()} = icmp eq {rlt(arg_type, arg_ptrl)}, %{prev_iota}", level)
+                    arg_type = sw_type.BOOL
                 case "!=":
-                    out_writeln(f"%{iota()} = icmp eq {arg_type}, %{prev_iota}", level)
+                    out_writeln(f"%{iota()} = icmp eq {rlt(arg_type, arg_ptrl)}, %{prev_iota}", level)
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
-                    arg_type = llvm_type[sw_type.BOOL]
+                    arg_type = sw_type.BOOL
             debug("Operand:", state.name, "done")
-            return iota(-1), arg_type
+            return iota(-1), arg_type, arg_ptrl
 
         case kind.BRANCH:
             debug("Compiling branch:", state.name)
             # out_writeln(f"; Branch: {state.name}", level)
             branch_id = iota()
             if state.name == "if":
-                arg_iota, arg_type = compile_statement(state.args[0], level)
+                arg_iota, arg_type, arg_ptrl = compile_statement(state.args[0], level)
                 if arg_type != sw_type.BOOL:
-                    out_writeln(f"%{iota()} = icmp ne {arg_type} %{arg_iota}, 0", level)
+                    out_writeln(f"%{iota()} = icmp ne {rlt(arg_type, arg_ptrl)} %{arg_iota}, 0", level)
                     out_write(f"br i1 %{iota(-1)}, label %then.{branch_id}", level)
                 if len(state.args) > 1:
                     out_writeln(f", label %else.{branch_id}")
@@ -1013,8 +1050,8 @@ def compile_statement(state, level: int = 0):
             elif state.name == "while":
                 out_writeln(f"br label %cond.{branch_id}", level)
                 out_writeln(f"cond.{branch_id}:", level)
-                arg_iota, arg_type = compile_statement(state.args[0], nlevel)
-                out_writeln(f"%{iota()} = icmp ne {arg_type} %{arg_iota}, 0", nlevel)
+                arg_iota, arg_type, arg_ptrl = compile_statement(state.args[0], nlevel)
+                out_writeln(f"%{iota()} = icmp ne {rlt(arg_type, arg_ptrl)} %{arg_iota}, 0", nlevel)
                 out_writeln(f"br i1 %{iota(-1)}, label %body.{branch_id}, label %end.{branch_id}", nlevel)
                 out_writeln(f"body.{branch_id}:", level)
                 compile_statement(state.block, nlevel)
@@ -1022,13 +1059,13 @@ def compile_statement(state, level: int = 0):
                 out_writeln(f"end.{branch_id}:", level)
             else:
                 compiler_error(state, "Branch '&t' is not implemented yet")
-            return iota(-1), arg_type
+            return iota(-1), arg_type, arg_ptrl
         case kind.FUNC_INT:
             ...
         case _:
             debug(f"SOMEHOW GOT HERE: {state.kind}")
             print_state((state,))
-    return prev_iota, prev_type
+    return prev_iota, prev_type, prev_ptrl
 
 out_writeln(f"""; FILE: {INFILE_PATH}
 
