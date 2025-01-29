@@ -1,0 +1,1 @@
+intern ptr void malloc(int)
