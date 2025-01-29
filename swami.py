@@ -115,6 +115,7 @@ def sizeof(type: int, ptrl: int): # in bytes please
             return 1
         case sw_type.BOOL:
             return 1
+    return -1
 
 human_type = [
     "ptr",
@@ -255,6 +256,7 @@ human_operands = [
     "<",
     ">=",
     "<=",
+    "&",
     "."
 ]
 
@@ -442,8 +444,6 @@ def parse_ptr_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     ptr_ref = statement()
     ptr_ref.kind = kind.PTR_REF
     current_stm, index = parse_sbrackets(index, tokens)
-    if len(current_stm.args) != 1:
-        parser_error(tokens[index], "Pointer indexing takes only 1 argument")
     if current_stm.args[0].type != sw_type.INT:
         parser_error(tokens[index], "Pointer indexing takes 1 integer as argument")
     ptr_ref.args = current_stm.args
@@ -465,9 +465,12 @@ def parse_structattr(index: int, tokens: tuple[str, int, int, str]) -> tuple[lis
     return name, index
 
 def parse_typename(index: int, tokens: tuple[str, int, int, str], level = 0) -> tuple[int, int, int]:
-    debug("typeparting", tokens[index][-1])
+    debug("typeparsing", tokens[index][-1])
     if tokens[index][-1] not in human_type:
-        parser_error(tokens[index], "'&t' is not a valid type.")
+        if level:
+            parser_error(tokens[index-1], "'&t' expected a typename, (use void to specify a generic ptr).")
+        else:
+            parser_error(tokens[index], "'&t' is not a valid type.")
     type = human_type.index(tokens[index][-1])
     index+=1
     if type == sw_type.VOID and level:
@@ -652,7 +655,7 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
     debug("operand: Trying to parse", tokens[index][-1], "at", index)
     if operand.name == "=":
         operand.args, index = parse_body(index, tokens, ";")
-    elif operand.name == "!":
+    elif operand.name in "!&":
         current_stm, index = parse_statement(index, tokens)
         operand.args.append(current_stm)
     elif operand.name == ".":
@@ -732,13 +735,13 @@ def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tu
     if tokens[index][-1] == "(":
         index+=1
         while tokens[index][-1] != ")":
-            if tokens[index][-1] != ",":
-                arg_stm = statement()
-                arg_stm.kind = kind.PLAIN_TYPE
-                arg_stm.type, arg_stm.ptr_level, index = parse_typename(index, tokens)
-                debug("Parsed:", tokens[index][-1])
-                function.args.append(arg_stm)
-            index+=1
+            if tokens[index][-1] == ",":
+                index+=1    
+            arg_stm = statement()
+            arg_stm.kind = kind.PLAIN_TYPE
+            arg_stm.type, arg_stm.ptr_level, index = parse_typename(index, tokens)
+            debug("Parsed:", tokens[index][-1])
+            function.args.append(arg_stm)
         for arg in function.args:
             if arg.type == sw_type.VOID:
                 parser_error(tokens[name_index], "In function extern '&t': cannot have 'void' as input type")
@@ -856,6 +859,7 @@ available_func.update(sw_builtins)
 available_func.update(sw_declared_funcs)
 
 compile_stack = []
+compilation_returned = 0
 def stacked_call(func):
     def wrapper(*args, **kwargs):
         ret = func(*args, *kwargs)
@@ -867,6 +871,8 @@ def cast(arg_iota, arg_type, arg_ptrl, state_type, state_ptrl, level):
     typecmp = bool(arg_ptrl) - bool(state_ptrl) # > 0 
     isptr = arg_ptrl or state_ptrl
     bothp = arg_ptrl and state_ptrl
+    if (arg_type, arg_ptrl) == (state_type, state_ptrl):
+        return iota(-1), state_type, state_ptrl
     if bothp:
         out_writeln(f"%{iota()} = bitcast {rlt(arg_type, arg_ptrl)} %{arg_iota} to {rlt(state_type, state_ptrl)}", level)
     elif isptr:
@@ -890,7 +896,9 @@ def cast(arg_iota, arg_type, arg_ptrl, state_type, state_ptrl, level):
 @stacked_call
 @loud_call
 def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
-    out_writeln(f"; {human_kind[state.kind]}")
+    # out_writeln(f"; {human_kind[state.kind]}")
+    global compilation_returned
+    compilation_returned = 0
     nlevel = level+1
     type_liota = []
     prev_ptr = iota(-1)-1
@@ -913,7 +921,7 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
         case kind.PTR_REF:
             debug("Compiling pointer dereferencing")
             for arg in state.args:
-                compile_statement(arg)
+                compile_statement(arg, level)
             out_writeln(f"%{iota()} = getelementptr {rlt(prev_type, prev_ptrl-1)}, {rlt(prev_type, prev_ptrl)} %{prev_iota}, i64 %{iota(-1)-1}", level)
             out_writeln(f"%{iota()} = load {rlt(prev_type, prev_ptrl-1)}, {rlt(prev_type, prev_ptrl)} %{iota(-1)-1}", level)
             return iota(-1), prev_type, prev_ptrl-1
@@ -1063,14 +1071,15 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                         arg_type = sw_type.VOID
                     else:
                         arg_iota, arg_type, arg_ptrl = current_type_iota
-                        if arg_type != state.type:
+                        if (arg_type, arg_ptrl) != (state.type, state.ptr_level):
                             compiler_error(state, f"function and return types don't match: {hlt(state.type, state.ptr_level)} != {hlt(arg_type, arg_ptrl)}")
                         out_write(f"{rlt(arg_type, arg_ptrl)} %{arg_iota} ")
                         out_writeln("")
+                    compilation_returned = 1
                 case INTRINSIC.CAST:
                     debug("compiling CAST intrinsic:", state.name)
                     for arg in state.args:
-                        arg_iota, arg_type, arg_ptrl = compile_statement(arg)
+                        arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
                     return cast(arg_iota, arg_type, arg_ptrl, state.type, state.ptr_level, level)
                 case INTRINSIC.SIZEOF:
                     debug("compiling sizeof intrinsic:", state.name)
@@ -1101,6 +1110,15 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                     debug(arg)
             for arg in state.args:
                 arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
+            if state.name == "!":
+                if arg_ptrl:
+                    niota, ntype, nptrl = cast(arg_iota, arg_type, arg_ptrl, sw_type.INT, 0, level)
+                out_writeln(f"%{iota()} = icmp ne {rlt(ntype, nptrl)} %{niota}, 0", level)
+                out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
+                return iota(-1), sw_type.BOOL, 0
+            if state.name == "&":
+                out_writeln(f"%{iota()} = bitcast ptr %{arg_iota-1} to ptr", level)
+                return iota(-1), arg_type, arg_ptrl+1
             if state.name == ".":
                 return arg_iota, arg_type, arg_ptrl
             if state.name == "=":
@@ -1128,28 +1146,25 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                     out_writeln(f"store {rlt(chsn_type, chsn_ptrl)} %{iota(-1)}, ptr %{prev_ptr}", level)
                 case ">":
                     out_writeln(f"%{iota()} = icmp sgt {rlt(chsn_type, chsn_ptrl)} %{nprev_iota}, %{narg_iota}", level)
-                    chsn_type = sw_type.BOOL
+                    chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case "<=":
                     out_writeln(f"%{iota()} = icmp sgt {rlt(chsn_type, chsn_ptrl)} %{nprev_iota}, %{narg_iota}", level)
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
-                    chsn_type = sw_type.BOOL
+                    chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case "<":
                     out_writeln(f"%{iota()} = icmp slt {rlt(chsn_type, chsn_ptrl)} %{nprev_iota}, %{narg_iota}", level)
-                    chsn_type = sw_type.BOOL
+                    chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case ">=":
                     out_writeln(f"%{iota()} = icmp slt {rlt(chsn_type, chsn_ptrl)} %{nprev_iota}, %{narg_iota}", level)
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
-                    chsn_type = sw_type.BOOL
-                case "!":
-                    out_writeln(f"%{iota()} = xor {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, true", level)
-                    chsn_type = sw_type.BOOL
+                    chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case "==":
                     out_writeln(f"%{iota()} = icmp eq {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, %{iota(-1)-1}", level)
-                    chsn_type = sw_type.BOOL
+                    chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case "!=":
                     out_writeln(f"%{iota()} = icmp eq {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, %{iota(-1)-1}", level)
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
-                    chsn_type = sw_type.BOOL
+                    chsn_type, chsn_ptrl = sw_type.BOOL, 0
             debug("Operand:", state.name, "done")
             return iota(-1), chsn_type, chsn_ptrl
 
@@ -1159,20 +1174,28 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
             branch_id = iota()
             if state.name == "if":
                 arg_iota, arg_type, arg_ptrl = compile_statement(state.args[0], level)
+                if compilation_returned:
+                    compiler_error(state, "Cannot return inside 'if' condition")
                 if arg_type != sw_type.BOOL:
-                    out_writeln(f"%{iota()} = icmp ne {rlt(arg_type, arg_ptrl)} %{arg_iota}, 0", level)
-                    out_write(f"br i1 %{iota(-1)}, label %then.{branch_id}", level)
+                    if arg_ptrl:
+                        niota, ntype, nptrl = cast(arg_iota, arg_type, arg_ptrl, sw_type.INT, 0, level)
+                        out_writeln(f"%{iota()} = icmp ne {rlt(ntype, nptrl)} %{niota}, 0", level)
+                    else:
+                        out_writeln(f"%{iota()} = icmp ne {rlt(arg_type, arg_ptrl)} %{arg_iota}, 0", level)
+                out_write(f"br i1 %{iota(-1)}, label %then.{branch_id}", level)
                 if len(state.args) > 1:
                     out_writeln(f", label %else.{branch_id}")
                 else:
                     out_writeln(f", label %done.{branch_id}")
                 out_writeln(f"then.{branch_id}:", level)
                 compile_statement(state.block, nlevel)
-                out_writeln(f"br label %done.{branch_id}", nlevel)
+                if not compilation_returned:
+                    out_writeln(f"br label %done.{branch_id}", nlevel)
                 if len(state.args) > 1:
                     out_writeln(f"else.{branch_id}:", level)
                     compile_statement(state.args[1], nlevel)
-                    out_writeln(f"br label %done.{branch_id}", nlevel)
+                    if not compilation_returned:
+                        out_writeln(f"br label %done.{branch_id}", nlevel)
                 out_writeln(f"done.{branch_id}:", level)
             elif state.name == "else":
                 compile_statement(state.block, level)
@@ -1180,11 +1203,13 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 out_writeln(f"br label %cond.{branch_id}", level)
                 out_writeln(f"cond.{branch_id}:", level)
                 arg_iota, arg_type, arg_ptrl = compile_statement(state.args[0], nlevel)
-                out_writeln(f"%{iota()} = icmp ne {rlt(arg_type, arg_ptrl)} %{arg_iota}, 0", nlevel)
+                if not compilation_returned:
+                    out_writeln(f"%{iota()} = icmp ne {rlt(arg_type, arg_ptrl)} %{arg_iota}, 0", nlevel)
                 out_writeln(f"br i1 %{iota(-1)}, label %body.{branch_id}, label %end.{branch_id}", nlevel)
                 out_writeln(f"body.{branch_id}:", level)
                 compile_statement(state.block, nlevel)
-                out_writeln(f"br label %cond.{branch_id}", nlevel)
+                if not compilation_returned:
+                    out_writeln(f"br label %cond.{branch_id}", nlevel)
                 out_writeln(f"end.{branch_id}:", level)
             else:
                 compiler_error(state, "Branch '&t' is not implemented yet")

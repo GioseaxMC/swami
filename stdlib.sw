@@ -1,1 +1,1 @@
-intern ptr void malloc(int)
+intern ptr void malloc(int);

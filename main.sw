@@ -1,27 +1,38 @@
 include "stdlib.sw";
 
-struct Person {
-    int age;
-    ptr char name;
+extern ptr void fopen(ptr void, ptr char)
+extern int fseek(ptr void, int, int)
+extern int ftell(ptr void)
+extern int rewind(ptr void)
+extern int fclose(ptr void)
+extern int fread(ptr void, int, int, ptr void)
+
+func ptr char read_file(ptr char filename, ptr int _size) {
+    ptr void file = fopen(filename, "rb");
+    if (!file) return cast(ptr char, 0);
+
+    fseek(file, 0, 2);
+    _size[0] = ftell(file);
+    rewind(file)
+
+    ptr char buffer = cast(ptr char, malloc(_size[0]+1));
+    if !buffer { fclose(file), return cast(ptr char, 0); }
+
+    fread(buffer, 1, _size[0], file)
+    buffer[_size[0]] = cast(char, 0);
+
+    fclose(file);
+    return buffer;
 }
 
 func void main() {
-    ptr Person persons = cast(ptr Person, malloc(2*sizeof(Person)));
-
-    persons[0].name = "Giose";
-    persons[0].age = 17;
-    persons[1].name = "Gabry";
-    persons[1].age = 15;
-
-    int idx = 0;
-    while (idx < 2) {
-        println(persons[idx].name);
-        printf("%i", persons[idx].age);
-        println("");
-        idx++;
+    int size;
+    ptr char content = read_file("main.sw", &size);
+    if content {
+        printf("content: %s", content);
     }
-
     return;
 }
+
 
 
