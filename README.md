@@ -18,9 +18,35 @@ func int main() {
   return 0;
 }
 ```
-### Commands:
+### Run:
 ```
 $ python swami.py main.sw -o main
 $ main
+
 Hello World!
+```
+### Simple cat implementation: cat.sw
+```c
+include "stdlib.sw";
+
+func int main(int argc, ptr ptr char argv) {
+  int i = 1;
+  ptr char contents;
+  while (i < argc) {
+    contents = read_file(argv);
+    println(contents)
+    i++;
+  }
+  return 0;
+}
+```
+### Run:
+```c
+$ python swami.py cat.sw -o cat
+$ cat main.sw
+
+func int main() {
+  println("Hello World!")
+  return 0;
+}
 ```
