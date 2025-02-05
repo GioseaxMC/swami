@@ -33,7 +33,7 @@ func int main(int argc, ptr ptr char argv) {
   int i = 1;
   ptr char contents;
   while (i < argc) {
-    contents = read_file(argv);
+    contents = read_file(argv[i]);
     println(contents)
     i++;
   }
