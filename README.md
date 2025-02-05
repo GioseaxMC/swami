@@ -41,7 +41,7 @@ func int main(int argc, ptr ptr char argv) {
 }
 ```
 ### Run:
-```c
+```bash
 $ python swami.py cat.sw -o cat
 $ cat main.sw
 
