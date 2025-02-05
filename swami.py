@@ -423,6 +423,8 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             current_statement, index = parse_function_external(index, tokens)
         case "intern":
             current_statement, index = parse_function_internal(index, tokens)
+        case "macro":
+            current_statement, index # = parse_macro_declaration(index, tokens) TODO
         case "{":
             current_statement, index = parse_block(index+1, tokens)
         case "(":
