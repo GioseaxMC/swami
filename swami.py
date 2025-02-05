@@ -13,11 +13,11 @@ def iota(reset: int = 0):
     return iota_counter
 
 DEBUGGING = "-d" in argv
-DEB_LEVEL = 0
+parse_level = 0
 def debug(*arguments) -> None:
     if not DEBUGGING:
         return
-    print("|  "*DEB_LEVEL, end="")
+    print("|  "*parse_level, end="")
     for arg in arguments:
         print(arg, end=" ")
     print()
@@ -58,13 +58,13 @@ def get_tk_pos(token: tuple[str, int, int, str]):
     return token[0]+":"+str(token[1]+1)+":"+str(token[2]+1)
 
 def loud_call(func):
-    global DEB_LEVEL;
+    global parse_level;
     def wrapper(*args, **kwargs):
-        global DEB_LEVEL
+        global parse_level
         debug("[CALL]:", func.__name__)
-        DEB_LEVEL+=1
+        parse_level+=1
         ret = func(*args, **kwargs)
-        DEB_LEVEL-=1
+        parse_level-=1
         debug("[ENDC]:", func.__name__)
         return ret
     return wrapper
@@ -98,6 +98,7 @@ class sw_type:
     VOID = iota()
     CHAR = iota()
     BOOL  = iota()
+    ANY = iota()
 
 def sizeof(type: int, ptrl: int): # in bytes please
     debug(rlt(type, ptrl))
@@ -123,7 +124,7 @@ human_type = [
     "void",
     "char",
     "bool",
-    "//",
+    "..",
 ]
 
 llvm_type = [
@@ -171,7 +172,7 @@ sw_builtins = { # name : type
     "print" : sw_type.VOID,
     "println" : sw_type.VOID,
     "printf" : sw_type.VOID,
-    "exit" : sw_type.VOID
+    "exit" : sw_type.VOID,
 }
 
 @dataclass
@@ -214,8 +215,9 @@ sw_declared_funcs_args = {
     "println" : 1,
     "print" : 1
 } # maybe for future use \ no wayy
-sw_declared_vars  = dict()
-sw_declared_vars_pevel  = dict()
+sw_declared_vars = list()
+sw_glob_vars = dict()
+sw_glob_vars_pevel  = dict()
 sw_declared_v_lvl = dict()
 sw_struct_info = dict()
 @dataclass
@@ -234,10 +236,18 @@ def add_usr_func(name, type, ptr_level, token, length):
         parser_error(token, "Redefinition of function '&t'") # this
 
 def add_usr_var(name, type, ptr_level, token):
-    global sw_declared_vars
-    if name not in sw_declared_vars:
-        sw_declared_vars[name] = type
-        sw_declared_vars_pevel[name] = ptr_level
+    sw_declared_vars.append(name)
+    if parse_level-2:
+        debug("Parsing level")
+        namespace = current_func_namespace
+        namespace_pevel = current_func_namespace_pevel
+    else:
+        debug("no parsing level")
+        namespace = sw_glob_vars
+        namespace_pevel = sw_glob_vars_pevel
+    if name not in namespace:
+        namespace[name] = type
+        namespace_pevel[name] = ptr_level
     else:
         parser_error(token, "Redefinition of variable '&t'")
 
@@ -257,12 +267,17 @@ human_operands = [
     ">=",
     "<=",
     "&",
-    "."
+    ".",
+    ".."
 ]
 
 string_literals = {}
+len_string_literals = {}
 def add_string(tokens, index):
-    string_literals["str."+str(len(string_literals)+1)] = tokens[index][-1]
+    size = len(string_literals)+1
+    llvm_str = eval_escape_codes(tokens[index][-1])
+    string_literals["str."+str(size)] = llvm_str
+    len_string_literals["str."+str(size)] = llvm_len(llvm_str)-1
     return "str."+str(len(string_literals))
 
 def uisalnum(s: str) -> bool:
@@ -286,6 +301,35 @@ def find_next(line: str) -> int:
         if not uisalnum(c):
             return max(1, idx)
     return -1
+
+def eval_escape_codes(s: str) -> str:
+    escape_map = {"n": "\\0A", "t": "\\09", "r": "\\0D", "b": "\\08", "f": "\\0C", "v": "\\0B", "'": "\\27", '"': "\\22", "\\": "\\5C"}
+    result = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s):
+            next_char = s[i + 1]
+            if next_char in escape_map:
+                result.append(escape_map[next_char])
+                i += 1
+            else:
+                result.append("\\")
+                result.append(next_char)
+        else:
+            result.append(s[i])
+        i += 1
+    return "".join(result)
+
+def llvm_len(s: str) -> int:
+    length = 0
+    i = 0
+    while i < len(s):
+        if s[i] == "\\" and i + 2 < len(s) and s[i+1] in "0123456789ABCDEFabcdef":
+            i += 3
+        else:
+            i += 1
+        length += 1
+    return length
 
 def lex_tokens(line: str):
     og_len = len(line)
@@ -336,11 +380,13 @@ class statement:
         self.kind = -1
         self.type = -1
         self.ptr_level = 0
-        self.subtype = -1
+        self.subkind = -1
         self.args = []
         self.block = None
         self.value = None
         self.ogToken = None
+        self.namespace = dict()
+        self.namespace_pevel = dict()
 
 statements: list[statement] = []
 
@@ -407,6 +453,7 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                     if tokenizable(current_tk):
                         parser_error(tokens[index], "'&t' is undefined")
                     else:
+                        parser_error(tokens[index], "'&t' was not understood", 0)
                         return statement(), -1;
     current_statement.ogToken = ogToken
     current_statement.lastToken = tokens[index-1]
@@ -436,6 +483,10 @@ def parse_sbrackets(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
     expression = statement()
     while tokens[index][-1] != "]":
         expression.args, index = parse_body(index, tokens, ",", "]")
+    debug("STATE OF SBRACK")
+    print_state(expression.args)
+    expression.type = expression.args[-1].type
+    expression.ptr_level = expression.args[-1].ptr_level
     index+=1
     return expression, index
 
@@ -444,8 +495,9 @@ def parse_ptr_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     ptr_ref = statement()
     ptr_ref.kind = kind.PTR_REF
     current_stm, index = parse_sbrackets(index, tokens)
-    if current_stm.args[0].type != sw_type.INT:
-        parser_error(tokens[index], "Pointer indexing takes 1 integer as argument")
+    print_state(current_stm.args)
+    # if current_stm.args[0].type != sw_type.INT:
+    #     parser_error(tokens[index], "Pointer indexing takes 1 integer as argument")
     ptr_ref.args = current_stm.args
     return ptr_ref, index
 
@@ -473,7 +525,7 @@ def parse_typename(index: int, tokens: tuple[str, int, int, str], level = 0) -> 
             parser_error(tokens[index], "'&t' is not a valid type.")
     type = human_type.index(tokens[index][-1])
     index+=1
-    if type == sw_type.VOID and level:
+    if type in (sw_type.VOID, sw_type.ANY) and level:
         return sw_type.CHAR, level, index
     if type == sw_type.PTR:
         type, level, index = parse_typename(index, tokens, level+1)
@@ -504,6 +556,7 @@ def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[stateme
     else:
         parser_error(tokens[index], "Expected struct body")
     str_info = struct_info()
+    print_state(struct.args)
     sw_struct_info[f"%struct.{struct.name}"] = str_info
     sw_struct_info[f"%struct.{struct.name}"].names = [x.name for x in struct.args]
     sw_struct_info[f"%struct.{struct.name}"].types = [x.type for x in struct.args]
@@ -538,7 +591,7 @@ def parse_body(index: int, tokens: tuple[str, int, int, str], stop_at, safefail_
 
 @loud_call
 def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
-    global statements, current_func_type
+    global statements, current_func_type, parse_level
     intrinsic = statement()
     intrinsic.name = tokens[index][-1]
     intrinsic.kind = kind.INTRINSIC
@@ -551,7 +604,10 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             included_path = string_literals[arg.name][1:-1]
             inc_tokens = list(lex_lines(included_path))
             debug(inc_tokens, "\n\n")
+            old_pl = parse_level
+            parse_level = 0 # so that it is 0 at parsing of the tokens
             inc_statements, _ = parse_statements(0, inc_tokens)
+            parse_level = old_pl
         statements += inc_statements
 
     elif tokens[index][-1] == "sizeof":
@@ -609,6 +665,9 @@ def parse_var_decl(index: int, tokens: tuple[str, int, int, str]) -> tuple[state
     if variable.type == sw_type.VOID and not variable.ptr_level:
         if tokens[index+1][-1].isalnum():
             parser_error(tokens[index], "type void cannot describe a value")
+    elif variable.type == sw_type.ANY:
+        if variable.ptr_level:
+            parser_error(tokens[index], "'..' type cannot be pointed to.")
     else:
         variable.name = tokens[index][-1]
         debug(f"VARIABLE: name: {variable.name} type: {llvm_type[variable.type] + "*"*variable.ptr_level}")
@@ -640,9 +699,15 @@ def parse_statements(index: int, tokens: tuple[str, int, int, str]) -> tuple[lis
 def parse_var_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     variable = statement()
     variable.kind = kind.VAR_REF
-    variable.type = sw_declared_vars[tokens[index][-1]]
-    variable.ptr_level = sw_declared_vars_pevel[tokens[index][-1]]
     variable.name = tokens[index][-1]
+    if variable.name in sw_glob_vars:
+        variable.type = sw_glob_vars[tokens[index][-1]]
+        variable.ptr_level = sw_glob_vars_pevel[tokens[index][-1]]
+    elif variable.name in sw_declared_vars:
+        variable.type = current_func_namespace[tokens[index][-1]]
+        variable.ptr_level = current_func_namespace_pevel[tokens[index][-1]]
+    else:
+        parser_error(tokens[index], "Undeclared variable")
     index+=1
     return variable, index
 
@@ -663,6 +728,8 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
         current_stm.name = tokens[index][-1]
         current_stm.kind = kind.STRUCT_REF
         operand.args.append(current_stm)
+        # operand.type = sw_struct_info[name].
+        # operand.ptr_level = operand.args[-1].ptr_level
         index+=1
     else:
         arg_stm, index = parse_statement(index, tokens)
@@ -789,25 +856,36 @@ def parse_function_internal(index: int, tokens: tuple[str, int, int, str]) -> tu
     return function, index+1
 
 current_func_type = (0, 0)
+current_func_namespace = None
+current_func_namespace_pevel = None
 @loud_call
 def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
-    global current_func_type
+    global current_func_type, current_func_namespace, current_func_namespace_pevel
     index+=1
     function = statement()
     function.kind = kind.FUNC_DECL
     if tokens[index][-1] not in human_type:
         parser_error(tokens[index], "Invalid type name")
     function.type, function.ptr_level, index = parse_typename(index, tokens)
+    if function.type == sw_type.ANY:
+        parser_error(tokens[index], "Function type cannot be '..'")
     current_func_type = function.type, function.ptr_level
+    current_func_namespace = function.namespace
+    current_func_namespace_pevel = function.namespace_pevel
     function.name = tokens[index][-1]
     name_index = index
     index+=1
     if tokens[index][-1] == "(":
         function.args, index = parse_body(index+1, tokens, ")")
+        arg_len = len(function.args)
         for arg in function.args:
             if arg.type == sw_type.VOID:
                 parser_error(tokens[name_index], "In function declaration '&t', cannot have 'void' as input type")
-        add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], len(function.args))
+            function.namespace[arg.name] = arg.type
+            function.namespace_pevel[arg.name] = arg.ptr_level
+            if arg.type == sw_type.ANY:
+                arg_len = -1
+        add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], arg_len)
     else:
         parser_error(tokens[index], "Missing arguments for function '&t'")
     
@@ -829,6 +907,8 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
         function.block.args[-1].ptr_level = function.ptr_level
     else:
         parser_error(tokens[index], "Function body MUST be a block: {}")
+    current_func_namespace = None
+    current_func_namespace_pevel = None
     return function, index
 
 tokens = list(lex_lines(INFILE_PATH))
@@ -842,7 +922,7 @@ if "main" not in sw_declared_funcs:
     parser_error((INFILE_PATH,0,0,""), "No main entry point found in the file, consider creating a main entry point.\n\n    expected:\n\n    func int main() {\n      return 0;\n    }")
 
 print_state(statements)
-for key, type in sw_declared_vars.items():
+for key, type in sw_glob_vars.items():
     debug(f"{type}: {key}")
 for key, type in sw_declared_funcs.items():
     debug(f"{type}: {key}")
@@ -872,6 +952,7 @@ def cast(arg_iota, arg_type, arg_ptrl, state_type, state_ptrl, level):
     isptr = arg_ptrl or state_ptrl
     bothp = arg_ptrl and state_ptrl
     if (arg_type, arg_ptrl) == (state_type, state_ptrl):
+        debug("Not casting, cuz same")
         return iota(-1), state_type, state_ptrl
     if bothp:
         out_writeln(f"%{iota()} = bitcast {rlt(arg_type, arg_ptrl)} %{arg_iota} to {rlt(state_type, state_ptrl)}", level)
@@ -897,7 +978,7 @@ def cast(arg_iota, arg_type, arg_ptrl, state_type, state_ptrl, level):
 @loud_call
 def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
     # out_writeln(f"; {human_kind[state.kind]}")
-    global compilation_returned
+    global compilation_returned, current_func_namespace, current_func_namespace_pevel
     compilation_returned = 0
     nlevel = level+1
     type_liota = []
@@ -921,12 +1002,16 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
         case kind.PTR_REF:
             debug("Compiling pointer dereferencing")
             for arg in state.args:
-                compile_statement(arg, level)
+                arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
+            if (arg_type, arg_ptrl) != (sw_type.INT, 0):
+                compiler_error(state, "Pointer indexing can only take 1 integer")
             out_writeln(f"%{iota()} = getelementptr {rlt(prev_type, prev_ptrl-1)}, {rlt(prev_type, prev_ptrl)} %{prev_iota}, i64 %{iota(-1)-1}", level)
             out_writeln(f"%{iota()} = load {rlt(prev_type, prev_ptrl-1)}, {rlt(prev_type, prev_ptrl)} %{iota(-1)-1}", level)
             return iota(-1), prev_type, prev_ptrl-1
         
         case kind.STRUCT_REF:
+            if state.name not in sw_struct_info[llvm_type[prev_type]].names:
+                compiler_error(state, f"'&t' is part of {llvm_type[prev_type]}")
             reference_idx = sw_struct_info[llvm_type[prev_type]].names.index(state.name) # struct name types index
             ref_type = sw_struct_info[llvm_type[prev_type]].types[reference_idx] # struct attr type
             ref_ptrl = sw_struct_info[llvm_type[prev_type]].ptrl[reference_idx] # struct attr type
@@ -950,6 +1035,10 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
 
         case kind.FUNC_CALL:
             debug("Compiling function call:", state.name)
+            if state.name in ("va_start", "va_end"):
+                to_call = "llvm."+state.name
+            else:
+                to_call = state.name
             # out_writeln(f"; Function call: {state.name}", level)
             for argstate in state.args:
                 for arg in argstate.args:
@@ -959,7 +1048,7 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 debug(f"[COMPILATION]: next up ->")
                 type_liota.append(current_type_iota)
             if available_func[state.name] == sw_type.VOID:
-                out_write(f"call void @{state.name}(", level)
+                out_write(f"call void @{to_call}(", level)
             else:
                 out_write(f"%{iota()} = call {rlt(available_func[state.name], sw_declared_funcs_pevel[state.name])} @{state.name}(", level)
             for idx, (arg_iota, arg_type, arg_ptrl) in enumerate(type_liota):
@@ -981,27 +1070,40 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                     out_write(", ")
             len_args = len(state.args)
             out_writeln(")")
-            return compile_stack[-1]
+            return prev_iota, prev_type, prev_ptrl
 
         case kind.FUNC_DECL:
             debug("Compiling function declaration:", state.name)
             # out_writeln(f"; Function declaration: {state.name}", level)
+            current_func_namespace = state.namespace
+            current_func_namespace_pevel = state.namespace_pevel
+            current_func_arg_iotas = []
             if level:
                 compiler_error(state, "Function declaration cannot be nested")
             out_write(f"define {rlt(state.type, state.ptr_level)} @{state.name}(")
             for idx, arg in enumerate(state.args):
-                out_write(f"{rlt(arg.type, arg.ptr_level)} %{iota()}")
-                if idx+1 != len(state.args):
+                if idx:
                     out_write(", ")
+                if arg.type == sw_type.ANY:
+                    out_write("...")
+                else:
+                    out_write(f"{rlt(arg.type, arg.ptr_level)} %{iota()}")
+                    current_func_arg_iotas.append(iota(-1))
             len_args = len(state.args)
-            out_write(") {\n")
+            out_writeln(") {")
+            if state.name == "main" :
+                out_writeln("entry:")
             for idx, arg in enumerate(state.args):
-                out_writeln(f"%{arg.name} = alloca {rlt(arg.type, arg.ptr_level)}", nlevel)
-                out_writeln(f"store {rlt(arg.type, arg.ptr_level)} %{iota()-len_args}, ptr %{arg.name}", nlevel)
+                if arg.type != sw_type.ANY:
+                    out_writeln(f"%{arg.name} = alloca {rlt(arg.type, arg.ptr_level)}", nlevel)
+                    out_writeln(f"store {rlt(arg.type, arg.ptr_level)} %{current_func_arg_iotas[idx]}, ptr %{arg.name}", nlevel)
+                    iota()
             for stm in state.block.args:
                 compile_statement(stm, nlevel)
             # out_writeln("ret i64 0", nlevel)
-            out_writeln("\n}\n")
+            out_writeln("}\n")
+            current_func_namespace = None
+            current_func_namespace_pevel = None
             return iota(-1), state.type, state.ptr_level
         
         case kind.NUM_LITER:
@@ -1019,7 +1121,6 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
         case kind.VAR_DECL:
             debug("Compiling variable declaration:", state.name)
             # out_writeln(f"; Variable declaration: {state.name}", level)
-            sw_declared_v_lvl[state.name] = level
             if level == 0:
                 if state.value:
                     out_writeln(f"@{state.name} = global {rlt(state.type, state.ptr_level)} {state.value}")
@@ -1041,13 +1142,17 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
         case kind.VAR_REF:
             debug("Compiling variable reference:", state.name)
             # out_writeln(f"; Variable reference: {state.name}", level)
-            if sw_declared_v_lvl.get(state.name) == 0:
+            if state.name in sw_glob_vars:
                 out_writeln(f"%{iota()} = bitcast ptr @{state.name} to ptr", level)
-                out_writeln(f"%{iota()} = load {rlt(sw_declared_vars[state.name], sw_declared_vars_pevel[state.name])}, ptr %{iota(-1)-1}", level)
+                out_writeln(f"%{iota()} = load {rlt(sw_glob_vars[state.name], sw_glob_vars_pevel[state.name])}, ptr %{iota(-1)-1}", level)
+                riota, rtype, rptrl = iota(-1), sw_glob_vars[state.name], sw_glob_vars_pevel[state.name]
             else:
                 out_writeln(f"%{iota()} = bitcast ptr %{state.name} to ptr", level)
-                out_writeln(f"%{iota()} = load {rlt(sw_declared_vars[state.name], sw_declared_vars_pevel[state.name])}, ptr %{iota(-1)-1}", level)
-            return iota(-1), sw_declared_vars[state.name], sw_declared_vars_pevel[state.name]
+                out_writeln(f"%{iota()} = load {rlt(current_func_namespace[state.name], current_func_namespace_pevel[state.name])}, ptr %{iota(-1)-1}", level)
+                riota, rtype, rptrl = iota(-1), current_func_namespace[state.name], current_func_namespace_pevel[state.name]
+            for arg in state.args:
+                compile_statement(arg, level)
+            return riota, rtype, rptrl
         
         case kind.INTRINSIC:
             arg_type, arg_ptrl = 0, 0
@@ -1159,10 +1264,10 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
                     chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case "==":
-                    out_writeln(f"%{iota()} = icmp eq {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, %{iota(-1)-1}", level)
+                    out_writeln(f"%{iota()} = icmp eq {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, %{nprev_iota}", level)
                     chsn_type, chsn_ptrl = sw_type.BOOL, 0
                 case "!=":
-                    out_writeln(f"%{iota()} = icmp eq {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, %{iota(-1)-1}", level)
+                    out_writeln(f"%{iota()} = icmp eq {rlt(chsn_type, chsn_ptrl)} %{narg_iota}, %{nprev_iota}", level)
                     out_writeln(f"%{iota()} = xor i1 %{iota(-1)-1}, true", level)
                     chsn_type, chsn_ptrl = sw_type.BOOL, 0
             debug("Operand:", state.name, "done")
@@ -1191,6 +1296,13 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 compile_statement(state.block, nlevel)
                 if not compilation_returned:
                     out_writeln(f"br label %done.{branch_id}", nlevel)
+                else:
+                    if state.block.kind == kind.BLOCK:
+                        if state.block.args[-1].subkind != INTRINSIC.RET:
+                            print_state(state.block.args)
+                            compiler_error(state.block.args[-1], "the last statement of a returning branch must be the return itself")
+                    elif state.block.subkind != INTRINSIC.RET:
+                        compiler_error(state.block.args[-1], "the last statement of a returning branch must be the return itself")
                 if len(state.args) > 1:
                     out_writeln(f"else.{branch_id}:", level)
                     compile_statement(state.args[1], nlevel)
@@ -1224,11 +1336,8 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
 out_writeln(f"""; FILE: {INFILE_PATH}
 
 declare void @printf(i8*, ...)
-declare ptr @malloc(i64)
-declare void @free(ptr)
-declare void @exit(i64)
 define void @print(i8* %{iota()}) {{ call void (i8*, ...) @printf(i8* %{iota(-1)}) ret void }}
-define void @println(i8* %{iota()}) {{ call void (i8*, ...) @printf(i8* %{iota(-1)}) call void @printf(i8* @newl) ret void }}
+define void @println(i8* %{iota()}) {{ call void (i8*, ...) @printf(i8* @stfmt, i8* %{iota(-1)}) ret void }}
 """)
 
 iota(1)
@@ -1237,12 +1346,12 @@ for state in statements:
 
 out_writeln()
 for idx, string in string_literals.items():
-    out_writeln(f"@{idx} = constant [{len(string)-1} x i8] c\"{string[1:-1]}\\00\"")
+    out_writeln(f"@{idx} = constant [{len_string_literals[idx]} x i8] c\"{string[1:-1]}\\00\"")
     out_writeln(f"@{idx}.ptr = global ptr @{idx}")
 
-out_writeln(f"@newl = constant [2 x i8] c\"\\0A\\00\"")
+out_writeln(f"@stfmt = constant [4 x i8] c\"%s\\0A\\00\"")
 
-# for idx, (key, arg_type) in enumerate(sw_declared_vars.items()):
+# for idx, (key, arg_type) in enumerate(sw_glob_vars.items()):
 #     out_writeln(f"@{key} = global {llvm_type[arg_type]} 0")
 
 out.close()
