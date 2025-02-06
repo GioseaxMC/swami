@@ -65,7 +65,7 @@ struct string {
 }
 
 struct string_vec {
-    ptr string;
+    ptr string items;
     int length;
     int capacity;
 }
@@ -139,7 +139,7 @@ func void str_add(ptr string __str, ptr char cstr) {
 func string_vec ptr_vec_init() {
     string_vec made;
     made.length = 0;
-    made.data = malloc(0);
+    made.items = cast(ptr string, malloc(0));
     made.capacity = 0;
     return made;
 }
@@ -148,26 +148,28 @@ func void ptr_vec_append(ptr string_vec _vec, string _str) {
     string_vec vec = _vec[0];
     if (vec.capacity <= (vec.length+1)) {
         vec.capacity = vec.capacity * 2;
-        if !vec.capacity {
+        if !(vec.capacity) {
             vec.capacity = 1; }
-        ptr string new_data = malloc(sizeof_string+1);
-        memcpy(new_data, vec.data, vec.capacity);
-        free(vec.data)
+        ptr string new_data = cast(ptr string, malloc(sizeof_string+1));
+        memcpy(new_data, vec.items, vec.capacity);
+        free(vec.items)
     }
     vec.length++;
-    vec.data[vec.length] = _str;
+    vec.items[vec.length] = _str;
     _vec[0] = vec;
+    return;
 }
 
-func ptr string str_split(string _str, char c) {
+func string_vec str_split(string _str, char c) {
     int idx = 0;
     string_vec vtemp = ptr_vec_init();
     string temp = str_init();
     while (idx < (_str.length)) {
         if (_str.data == c) {
-            
+            0
         }
     }
+    return vtemp;
 }
 
 extern void va_start(ptr void)
