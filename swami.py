@@ -230,6 +230,9 @@ sw_declared_vars = list()
 sw_glob_vars = dict()
 sw_glob_vars_pevel  = dict()
 sw_declared_v_lvl = dict()
+
+sw_included_paths = list()
+sw_external_funcs = list()
 sw_struct_info = dict()
 do_bounds_check = 1
 @dataclass
@@ -419,6 +422,8 @@ def parse_tokens_as_block(tokens, index):
                 body_tokens.append(tokens[index])
             else:
                 running = 0
+        else:
+            body_tokens.append(tokens[index])
         #     print("appended", tokens[index][-1])
         index+=1
     return body_tokens, index
@@ -675,12 +680,15 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
         intrinsic.args, index = parse_body(index, tokens, ";")
         for arg in intrinsic.args:
             included_path = string_literals[arg.name][1:-1]
-            inc_tokens = list(lex_lines(included_path))
-            debug(inc_tokens, "\n\n")
-            old_pl = parse_level
-            parse_level = 0 # so that it is 0 at parsing of the tokens
-            inc_statements, _ = parse_statements(0, inc_tokens)
-            parse_level = old_pl
+            if not included_path in sw_included_paths:
+                sw_included_paths.append(included_path)
+                string_literals.pop(arg.name)
+                inc_tokens = list(lex_lines(included_path))
+                debug(inc_tokens, "\n\n")
+                old_pl = parse_level
+                parse_level = 0 # so that it is 0 at parsing of the tokens
+                inc_statements, _ = parse_statements(0, inc_tokens)
+                parse_level = old_pl
         statements += inc_statements
 
     elif tokens[index][-1] == "sizeofi":
@@ -897,9 +905,9 @@ def parse_macro_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[sta
                 parser_error(tokens[name_index], f"macro '&t' takes exactly {len(sw_declared_macros_args[macro.name])} argument(s) but {len(macro_args)} were given")
     macro.kind = kind.BLOCK
     macro_index = 0
-    macro_tks = sw_declared_macros_tokens[macro.name]
-    debug("[MACRO]", macro_args)
-    debug("[MACRO]", macro_tks)
+    macro_tks = sw_declared_macros_tokens[macro.name].copy() #translates to memcpy()
+    # debug("[MACROTKS]", macro_tks)
+    debug("[MACROARGS]: ", macro_args)
     for tk_idx, tk in enumerate(macro_tks):
         if tk[-1] in sw_declared_macros_args[macro.name]:
             debug("[MACRO] stating argument:", tk[-1])
@@ -913,25 +921,32 @@ def parse_macro_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[sta
 
     do_bounds_check = 0
     while macro_index < len(macro_tks):
-        debug("mc call: Trying to parse", macro_tks[macro_index][-1], "at", macro_index)
+        debug("[MACROCALL]: Trying to parse", macro_tks[macro_index][-1], "at", macro_index)
+        if macro_index+1 == len(macro_tks):
+            debug("[MACROCALL]: is last")
+            debug("[MACRO CALL]", macro_tks)
         current_stm, macro_index = parse_statement(macro_index, macro_tks)
         macro.args.append(current_stm)
         if macro_index == -1:
             exit(-1)
     do_bounds_check = 1
     return macro, index+1
-        
-    
 
 @loud_call
 def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     index+=1
+    just_created = 0
     function = statement(tokens[index])
     function.kind = kind.FUNC_EXT
     if tokens[index][-1] not in human_type:
         parser_error(tokens[index], "invalid typename for function")
     function.type, function.ptr_level, index = parse_typename(index, tokens)
     function.name = tokens[index][-1]
+    if not function.name in sw_external_funcs:
+        just_created = 1
+        sw_external_funcs.append(function.name)
+    else:
+        function.kind = kind.NULL
     name_index = index
     index+=1
     if tokens[index][-1] == "(":
@@ -951,7 +966,8 @@ def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tu
             arg_len = -1
         else:
             arg_len = len(function.args)
-        add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], arg_len)
+        if just_created:
+            add_usr_func(function.name, function.type, function.ptr_level, tokens[name_index], arg_len)
     else:
         parser_error(tokens[index], "Missing arguments for function '&t'")
     return function, index+1
