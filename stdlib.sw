@@ -1,5 +1,7 @@
 extern ptr void malloc(int);
 
+extern ptr void realloc(ptr void, int)
+
 extern ptr void fopen(ptr void, ptr char)
 extern int fseek(ptr void, int, int)
 extern int ftell(ptr void)

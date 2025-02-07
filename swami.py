@@ -17,7 +17,7 @@ parse_level = 0
 def debug(*arguments) -> None:
     if not DEBUGGING:
         return
-    print("|  "*parse_level, end="")
+    print(": "*parse_level, end="")
     for arg in arguments:
         print(arg, end=" ")
     print()
@@ -92,6 +92,7 @@ class kind:
     STRUCT = iota()
     STRUCT_REF = iota()
     PTR_REF = iota()
+    NULL = iota()
 
 stoppers = [";)}"]
 
@@ -186,6 +187,7 @@ class INTRINSIC:
     INCLUDE = iota()
     CAST = iota()
     SIZEOF = iota()
+    SIZEOFI = iota()
 
 human_intrinsic = [
     "return",
@@ -193,6 +195,7 @@ human_intrinsic = [
     "include",
     "cast",
     "sizeof",
+    "sizeofi",
 ]
 
 human_branch = [
@@ -219,11 +222,16 @@ sw_declared_funcs_args = {
     "println" : 1,
     "print" : 1
 } # maybe for future use \ no wayy
+
+sw_declared_macros_tokens: dict[str, list[tuple]] = {}
+sw_declared_macros_args: dict[str, list[str]] = {}
+
 sw_declared_vars = list()
 sw_glob_vars = dict()
 sw_glob_vars_pevel  = dict()
 sw_declared_v_lvl = dict()
 sw_struct_info = dict()
+do_bounds_check = 1
 @dataclass
 class struct_info:
     names = []
@@ -381,8 +389,8 @@ while idx < argc:
 class statement:
     def __init__(self, token):
         self.name = ""
-        self.kind = -1
-        self.type = -1
+        self.kind = kind.NULL
+        self.type = sw_type.VOID
         self.ptr_level = 0
         self.subkind = -1
         self.args = []
@@ -394,6 +402,36 @@ class statement:
         self.namespace_pevel = dict()
 
 statements: list[statement] = []
+
+def parse_tokens_as_block(tokens, index):
+    index+=1
+    body_tokens = []
+    indentation_level = 0
+    running = 1
+    while running:
+        tkname = tokens[index][-1]
+        debug("[MACRO]: parsing", tkname)
+        if tkname == "{":
+            indentation_level+=1
+        if tkname == "}":
+            if indentation_level:
+                indentation_level-=1
+                body_tokens.append(tokens[index])
+            else:
+                running = 0
+        #     print("appended", tokens[index][-1])
+        index+=1
+    return body_tokens, index
+
+@loud_call
+def parse_tokens_as_args(tokens, index):
+    body_tokens = []
+    while (tokens[index][-1] not in ",)"):
+        tkname = tokens[index][-1]
+        debug("[MACRO]: parsing", tkname)
+        body_tokens.append(tokens[index])
+        index+=1
+    return body_tokens, index
 
 def print_state(states: list[statement], level: int = 0):
     nlevel = level+1
@@ -407,20 +445,20 @@ def print_state(states: list[statement], level: int = 0):
             try:
                 print_state(state.args, nlevel)
             except Exception as e:
-                debug("Not printable:", e, state.args)
+                debug("Not printable:", e, " :: ", state.args)
         if state.block:
             debug(f"{" "*level*2} -Block:")
             try:
                 print_state([state.block,], nlevel)
             except Exception as e:
-                debug("Not printable:", e, state.block)
+                debug("Not printable:", e, " :: ", state.block)
 
 def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     current_tk = tokens[index+0][-1]
     current_statement = statement(tokens[index])
     match current_tk:
         case ";"|"," :
-            return None, index+1
+            return current_statement, index+1
         case "func":
             current_statement, index = parse_function_declaration(index, tokens)
         case "extern":
@@ -428,7 +466,7 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
         case "intern":
             current_statement, index = parse_function_internal(index, tokens)
         case "macro":
-            current_statement, index # = parse_macro_declaration(index, tokens) TODO
+            _, index = parse_macro_declaration(index, tokens)
         case "{":
             current_statement, index = parse_block(index+1, tokens)
         case "(":
@@ -455,13 +493,15 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                     current_statement, index = parse_operand(index, tokens)
                 elif current_tk in human_branch:
                     current_statement, index = parse_branch(index, tokens)
+                elif current_tk in sw_declared_macros_tokens:
+                    current_statement, index = parse_macro_call(index, tokens)
                 else:
                     if tokenizable(current_tk):
                         parser_error(tokens[index], "'&t' is undefined")
                     else:
                         parser_error(tokens[index], "'&t' was not understood", 0)
-                        return statement(tokens[index]), -1;
-    current_statement.lastToken = tokens[index-1]
+    if index < len(tokens):
+        current_statement.lastToken = tokens[index-1]
     return current_statement, index
 
 def parse_block(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
@@ -489,7 +529,6 @@ def parse_sbrackets(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
     while tokens[index][-1] != "]":
         expression.args, index = parse_body(index, tokens, ",", "]")
     debug("STATE OF SBRACK")
-    print_state(expression.args)
     expression.type = expression.args[-1].type
     expression.ptr_level = expression.args[-1].ptr_level
     index+=1
@@ -500,7 +539,6 @@ def parse_ptr_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     ptr_ref = statement(tokens[index])
     ptr_ref.kind = kind.PTR_REF
     current_stm, index = parse_sbrackets(index, tokens)
-    print_state(current_stm.args)
     # if current_stm.args[0].type != sw_type.INT:
     #     parser_error(tokens[index], "Pointer indexing takes 1 integer as argument")
     ptr_ref.args = current_stm.args
@@ -537,6 +575,37 @@ def parse_typename(index: int, tokens: tuple[str, int, int, str], level = 0) -> 
         return type, level, index
     return type, level, index
 
+@loud_call
+def parse_macro_declaration(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    index+=1
+    macro_name = tokens[index][-1]
+    if not tokenizable(macro_name):
+        parser_error(tokens[index], "Not a valid name for a macro")
+    index+=1
+    if tokens[index][-1] != "(":
+        parser_error(tokens[index], "Expected '(' for macro arguments after macro name")
+    index+=1
+    sw_declared_macros_args[macro_name] = []
+    while tokens[index][-1] != ")":
+        if tokens[index][-1] != ",":
+            sw_declared_macros_args[macro_name].append(tokens[index][-1])
+        else:
+            parser_error(tokens[index], "Expected argument")
+        index+=1
+        if tokens[index][-1] == ",":
+            index+=1
+        elif tokens[index][-1] == ")":
+            debug("met ) in macro")
+        else:
+            parser_error(tokens[index], "Expected ',' or ')' after argument")
+    index+=1
+    debug(tokens[index])
+    sw_declared_macros_tokens[macro_name], index = parse_tokens_as_block(tokens, index)
+    index
+    selfstm = statement(tokens[index-1])
+    selfstm.kind = kind.NULL
+    return selfstm, index
+    
 
 @loud_call
 def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
@@ -554,14 +623,13 @@ def parse_struct(index: int, tokens: tuple[str, int, int, str]) -> tuple[stateme
     index+=1
     if tokens[index][-1] == "{":
         index+=1
-        while tokens[index][-1] != "}":
+        while index < len(tokens) and tokens[index][-1] != "}":
             current_name, index = parse_structattr(index, tokens)
             struct.args.append(current_name)
             index+=1
     else:
         parser_error(tokens[index], "Expected struct body")
     str_info = struct_info()
-    print_state(struct.args)
     sw_struct_info[f"%struct.{struct.name}"] = str_info
     sw_struct_info[f"%struct.{struct.name}"].names = [x.name for x in struct.args]
     sw_struct_info[f"%struct.{struct.name}"].types = [x.type for x in struct.args]
@@ -586,11 +654,11 @@ def parse_body(index: int, tokens: tuple[str, int, int, str], stop_at, safefail_
             parser_error(tokens[start], f"Expression must have the closing token '{stop_at}'")
         if index < len(tokens):
             debug(f"body({stop_at}): [NEXT]: tobeparsed:", tokens[index][-1], "at", index)
-        if current_stm:
+        if current_stm.kind != kind.NULL:
             statements.append(current_stm)
     index+=1
-    if index > len(tokens):
-        parser_error(tokens[start], f"Expression must be closed with '{stop_at}'")
+    if do_bounds_check and index > len(tokens):
+        parser_error(tokens[start], f"Statement must be closed with '{stop_at}'")
     debug(f"body({stop_at}): [DONE]: Done parsing body")
     return statements, index
 
@@ -615,6 +683,13 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             parse_level = old_pl
         statements += inc_statements
 
+    elif tokens[index][-1] == "sizeofi":
+        index+=1
+        if tokens[index][-1] == "(":
+            intrinsic.block, index = parse_expression(index, tokens)
+        else:
+            parser_error(tokens[index-1], "Expected '(' after a call to 'cast'")
+
     elif tokens[index][-1] == "sizeof":
         index+=1
         if tokens[index][-1] == "(":
@@ -635,7 +710,7 @@ def parse_intrinsic(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
             index+=1
             intrinsic.args, index = parse_body(index, tokens, ")")
         else:
-            parser_error(tokens[index-1], "Expected ',' with an expression to evaluate after 'cast(<type>'")
+            parser_error(tokens[index-1], "Expected ',' with an expression to evaluate after 'cast(type'")
 
     else:
         if intrinsic.subkind == INTRINSIC.RET:
@@ -708,7 +783,7 @@ def parse_var_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     if variable.name in sw_glob_vars:
         variable.type = sw_glob_vars[tokens[index][-1]]
         variable.ptr_level = sw_glob_vars_pevel[tokens[index][-1]]
-    elif variable.name in sw_declared_vars:
+    elif variable.name in current_func_namespace:
         variable.type = current_func_namespace[tokens[index][-1]]
         variable.ptr_level = current_func_namespace_pevel[tokens[index][-1]]
     else:
@@ -723,6 +798,7 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
     operand.name = tokens[index][-1]
     index+=1
     debug("operand: Trying to parse", tokens[index][-1], "at", index)
+    causer_idx = index
     if operand.name == "=":
         operand.args, index = parse_body(index, tokens, ";")
     elif operand.name in "!&":
@@ -740,7 +816,9 @@ def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statem
         arg_stm, index = parse_statement(index, tokens)
         if arg_stm:
             operand.args.append(arg_stm)
-    debug("operand: [DONE]: tobeparsed:", tokens[index][-1], "at", index)
+    # if index >= len(tokens):
+    #     parser_error(tokens[causer_idx], "Token '&t' ate too much")
+    # debug("operand: [DONE]: tobeparsed:", tokens[index][-1], "at", index)
     return operand, index
 
 @loud_call
@@ -754,9 +832,10 @@ def parse_branch(index: int, tokens: tuple[str, int, int, str]) -> tuple[stateme
         branch.args.append(current_stm)
         branch.block, index = parse_statement(index, tokens)
         debug("[BRCH]: checking if is else")
-        if tokens[index][-1] == "else":
-            current_stm, index = parse_statement(index+1, tokens)
-            branch.args.append(current_stm)
+        if index < len(tokens):
+            if tokens[index][-1] == "else":
+                current_stm, index = parse_statement(index+1, tokens)
+                branch.args.append(current_stm)
     elif branch.name == "else":
         parser_error(tokens[index], "Branch 'else' can only be used after 'if'")
     elif branch.name == "while":
@@ -779,7 +858,8 @@ def parse_function_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     index+=1
     if tokens[index][-1] == "(":
         index+=1
-        while tokens[index][-1] != ")":
+        debug("[FUNCTION] to be parsed '", tokens[index][-1])
+        while index < len(tokens) and tokens[index][-1] != ")":
             current_exp = statement(tokens[index])
             current_exp.args, index = parse_body(index, tokens, ",", ")")
             function.args.append(current_exp)
@@ -792,6 +872,56 @@ def parse_function_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[
     else:
         parser_error(tokens[index], "Missing arguments for function '&t'")
     return function, index+1
+
+@loud_call
+def parse_macro_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
+    global do_bounds_check
+    macro = statement(tokens[index])
+    macro.name = tokens[index][-1]
+    name_index = index
+    macro_args: list[list[tuple]] = []
+    index+=1
+    if tokens[index][-1] != "(":
+        parser_error(tokens[index], "Expected '('")
+    if tokens[index][-1] == "(":
+        index+=1
+        while tokens[index][-1] != ")":
+            arg_args, index = parse_tokens_as_args(tokens, index)
+            macro_args.append(arg_args)
+            if tokens[index][-1] == ",":
+                index+=1
+        if len(macro_args) != len(sw_declared_macros_args[macro.name]):
+            if len(macro_args) == 1:
+                parser_error(tokens[name_index], f"macro '&t' takes exactly {len(sw_declared_macros_args[macro.name])} argument(s) but 1 was given")
+            else:
+                parser_error(tokens[name_index], f"macro '&t' takes exactly {len(sw_declared_macros_args[macro.name])} argument(s) but {len(macro_args)} were given")
+    macro.kind = kind.BLOCK
+    macro_index = 0
+    macro_tks = sw_declared_macros_tokens[macro.name]
+    debug("[MACRO]", macro_args)
+    debug("[MACRO]", macro_tks)
+    for tk_idx, tk in enumerate(macro_tks):
+        if tk[-1] in sw_declared_macros_args[macro.name]:
+            debug("[MACRO] stating argument:", tk[-1])
+            st_idx = sw_declared_macros_args[macro.name].index(tk[-1])
+            debug(sw_declared_macros_args[macro.name])
+            # debug(macro_tks)
+            macro_tks.pop(tk_idx)
+            for idx, arg in enumerate(macro_args[st_idx]):
+                macro_tks.insert(tk_idx+idx, arg)
+            # debug(macro_tks)
+
+    do_bounds_check = 0
+    while macro_index < len(macro_tks):
+        debug("mc call: Trying to parse", macro_tks[macro_index][-1], "at", macro_index)
+        current_stm, macro_index = parse_statement(macro_index, macro_tks)
+        macro.args.append(current_stm)
+        if macro_index == -1:
+            exit(-1)
+    do_bounds_check = 1
+    return macro, index+1
+        
+    
 
 @loud_call
 def parse_function_external(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
@@ -885,7 +1015,7 @@ def parse_function_declaration(index: int, tokens: tuple[str, int, int, str]) ->
         arg_len = len(function.args)
         for arg in function.args:
             if arg.type == sw_type.VOID:
-                parser_error(tokens[name_index], "In function declaration '&t', cannot have 'void' as input type")
+                parser_error(tokens[name_index], "Function declaration '&t' cannot have 'void' as input type")
             function.namespace[arg.name] = arg.type
             function.namespace_pevel[arg.name] = arg.ptr_level
             if arg.type == sw_type.ANY:
@@ -1196,6 +1326,12 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                     for arg in state.args:
                         arg_iota, arg_type, arg_ptrl = compile_statement(arg, level)
                     return cast(arg_iota, arg_type, arg_ptrl, state.type, state.ptr_level, level)
+                case INTRINSIC.SIZEOFI:
+                    debug("compiling sizeofi intrinsic:", state.name)
+                    arg_iota, arg_type, arg_ptrl = compile_statement(state.block, level)
+                    out_writeln(f"%{iota()} = getelementptr {rlt(arg_type, arg_ptrl)}, {rlt(arg_type, arg_ptrl+1)} null, i64 1", level)
+                    out_writeln(f"%{iota()} = ptrtoint {rlt(arg_type, arg_ptrl+1)} %{iota(-1)-1} to i64", level)
+                    arg_type, arg_ptrl = sw_type.INT, 0
                 case INTRINSIC.SIZEOF:
                     debug("compiling sizeof intrinsic:", state.name)
                     out_writeln(f"%{iota()} = getelementptr {rlt(state.type, state.ptr_level)}, {rlt(state.type, state.ptr_level+1)} null, i64 1", level)
@@ -1240,10 +1376,11 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 return arg_iota, arg_type, arg_ptrl
             if state.name == "=":
                 debug(f"ASSIGNING: {(arg_type, arg_ptrl)} TO {(prev_type, prev_ptrl)}")
-                if rlt(prev_type, prev_ptrl) == rlt(arg_type, arg_ptrl):
-                    out_writeln(f"store {rlt(arg_type, arg_ptrl)} %{arg_iota}, {rlt(prev_type, prev_ptrl+1)} %{prev_ptr}", level)
-                else:
-                    compiler_error(state, f"Types don't match: {human_type[prev_type]+"*"*prev_ptrl} != {human_type[arg_type]+"*"*arg_ptrl}")
+                niota, ntype, nptrl = cast(arg_iota, arg_type, arg_ptrl, prev_type, prev_ptrl, level)
+                # if rlt(prev_type, prev_ptrl) == rlt(arg_type, arg_ptrl):
+                out_writeln(f"store {rlt(ntype, nptrl)} %{niota}, {rlt(prev_type, prev_ptrl+1)} %{prev_ptr}", level)
+                # else:
+                #     compiler_error(state, f"Types don't match: {human_type[prev_type]+"*"*prev_ptrl} != {human_type[arg_type]+"*"*arg_ptrl}")
             nprev_iota = prev_iota
             narg_iota, chsn_type, chsn_ptrl = cast(arg_iota, arg_type, arg_ptrl, state.type, state.ptr_level, level)
             match state.name:
@@ -1311,7 +1448,6 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 else:
                     if state.block.kind == kind.BLOCK:
                         if state.block.args[-1].subkind != INTRINSIC.RET:
-                            print_state(state.block.args)
                             compiler_error(state.block.args[-1], "the last statement of a returning branch must be the return itself")
                     elif state.block.subkind != INTRINSIC.RET:
                         compiler_error(state.block.args[-1], "the last statement of a returning branch must be the return itself")
@@ -1342,7 +1478,6 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
             ...
         case _:
             debug(f"SOMEHOW GOT HERE: {state.kind}")
-            print_state((state,))
     return prev_iota, prev_type, prev_ptrl
 
 out_writeln(f"""; FILE: {INFILE_PATH}
@@ -1355,6 +1490,7 @@ define void @println(i8* %{iota()}) {{ call void (i8*, ...) @printf(i8* @stfmt, 
 iota(1)
 for state in statements:
     compile_statement(state)
+
 
 out_writeln()
 for idx, string in string_literals.items():

@@ -77,12 +77,13 @@ struct statement {
 }
 
 func ptr char get_tk_pos(token tk) {
-    return str_fmt("%s:%zu:%zu", tk.name, (tk.col+1), (tk.row+1))
+    return str_fmt("%s:%zu:%zu", tk.name, (tk.col+1), (tk.row+1));
 }
 
 func void parser_error(token tk, ptr char prompt, int errno) {
-    println("%s: ERROR: %s", get_tk_pos(), str_fmt(prompt, token.name))
-    content = read_file(token.filename)
+    printf("%s: ERROR: %s\n", get_tk_pos(tk), str_fmt(prompt, tk.name));
+    int size;
+    ptr char content = read_file(tk.filename, &size);
     
     return;
 }
@@ -110,7 +111,6 @@ func void init_stuff() {
 
 func int main(int argc, ptr ptr char argv) {
     init_stuff()
-    parser_error()
 
     return 0;
 }
