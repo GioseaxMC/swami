@@ -1,8 +1,19 @@
 extern int strlen(ptr char)
 extern void strcpy(ptr char, ptr char)
+extern ptr char strstr(ptr char, ptr char)
 extern ptr void malloc(int)
 extern void free(ptr void)
 extern void exit(int)
+
+ptr void str_null = cast(ptr void, 0);
+
+macro _load(ptr) { ptr[0] }
+
+macro addptr(p, offset) { cast(ptr void, (cast(int, p)+offset)) }
+
+func bool is_letter(char letter) {
+    return (letter >= 65 && letter <= 90) or (letter >= 97 || letter <= 122);
+}
 
 struct string {
 	ptr char data;
@@ -75,25 +86,57 @@ func void str_add(ptr string _str, ptr char _new) {
     return;
 }
 
-func void str_remove(str string _str, int _pos, int _len) {
+func void str_remove(ptr string _str, int _pos, int _len) {
     string str = _str[0];
-    str_assert(_len > 0, "length of remover must be more than 0");
-    str_assert(_len+_pos <= (str.length), "removing out of range");
+    str_assert((_len > 0), "length of remover must be more than 0");
+    str_assert((_len+_pos <= (str.length)), "removing out of range");
     int idx = 0;
     while (str.length-_pos-_len+1 > idx) {
-        if (_pos+idx+_len <= length) {
-            at(_pos+idx) = data[_pos+idx+_len];
+        if (_pos+idx+_len <= (str.length)) {
+            str.data[_pos+idx] = str.data[_pos+idx+_len];
         }
+        idx++;
     }
-    length -= _len;
-    return self;
+    str.length = str.length - _len;
+    _str[0] = str;
+    return;
+}
 
+func void str_clear(ptr string _str) {
+    string str = _str[0];
+    str.length = 0;
+    str.capacity = 1;
+    free(str.data);
+    str.data = malloc(1);
+    str.data[0] = ""[0];
+    _str[0] = str;
+    return;
+}
+
+func void str_replace(ptr string _str, ptr char _old, ptr char _new) {
+    string str = _load(_str);
+    int old_len = strlen(_old);
+    int new_len = strlen(_new);
+    ptr char result;
+    int offset = 0;
+    while ((result = strstr(addptr(str.data, offset), _old);) != str_null) {
+        int _pos = (cast(int, result) - cast(int, str.data));
+        str_remove(&str, _pos, old_len);
+        offset = cast(int, result) - cast(int, str.data) + new_len;
+        str_insert(&str, _pos, _new);
+    }
+    _load(_str) = str;
+    return;
 }
 
 func void main() {
     string str = str_init();
-    str_set(&str, "01234567");
+    str_set(&str, "1111");
     str_add(&str, "89");
+    str_insert(&str, 0, "[");
+    str_replace(&str, "1", "Ciao, ");
+    str_add(&str, "]");
     println(str.data);
+    
     return;
 }

@@ -399,6 +399,7 @@ class statement:
         self.args = []
         self.block = None
         self.value = None
+        self.prevToken = token
         self.ogToken = token
         self.lastToken = token
         self.namespace = dict()
@@ -406,6 +407,7 @@ class statement:
 
 statements: list[statement] = []
 
+@loud_call
 def parse_tokens_as_block(tokens, index):
     index+=1
     body_tokens = []
@@ -431,12 +433,26 @@ def parse_tokens_as_block(tokens, index):
 @loud_call
 def parse_tokens_as_args(tokens, index):
     body_tokens = []
-    while (tokens[index][-1] not in ",)"):
+    indentation_level = 0
+    running = 1
+    while running:
         tkname = tokens[index][-1]
-        debug("[MACRO]: parsing", tkname)
-        body_tokens.append(tokens[index])
+        debug("[MACROARG]: parsing", tkname, "with indentation", indentation_level)
+        if tkname == "(":
+            indentation_level+=1
+        if tkname == ")":
+            if indentation_level:
+                indentation_level-=1
+                body_tokens.append(tokens[index])
+            else:
+                running = 0
+        elif tkname == "," and not indentation_level:
+            running = 0
+        else:
+            body_tokens.append(tokens[index])
+        #     print("appended", tokens[index][-1])
         index+=1
-    return body_tokens, index
+    return body_tokens, index-1
 
 def print_state(states: list[statement], level: int = 0):
     nlevel = level+1
@@ -461,6 +477,8 @@ def print_state(states: list[statement], level: int = 0):
 def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     current_tk = tokens[index+0][-1]
     current_statement = statement(tokens[index])
+    if index:
+        current_statement.prevToken = tokens[index-1]
     match current_tk:
         case ";"|"," :
             return current_statement, index+1
@@ -504,7 +522,8 @@ def parse_statement(index: int, tokens: tuple[str, int, int, str]) -> tuple[stat
                     if tokenizable(current_tk):
                         parser_error(tokens[index], "'&t' is undefined")
                     else:
-                        parser_error(tokens[index], "'&t' was not understood", 0)
+                        parser_error(tokens[index], "'&t' was not understood, maybe you didn't close something?", 0)
+                        index+=1
     if index < len(tokens):
         current_statement.lastToken = tokens[index-1]
     return current_statement, index
@@ -802,6 +821,8 @@ def parse_var_reference(index: int, tokens: tuple[str, int, int, str]) -> tuple[
 @loud_call
 def parse_operand(index: int, tokens: tuple[str, int, int, str]) -> tuple[statement, int]:
     operand = statement(tokens[index])
+    if index:
+        operand.prevToken = tokens[index-1]
     operand.kind = kind.OPERAND
     operand.name = tokens[index][-1]
     index+=1
@@ -893,6 +914,7 @@ def parse_macro_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[sta
         parser_error(tokens[index], "Expected '('")
     if tokens[index][-1] == "(":
         index+=1
+        debug("[MACRING] from", tokens[index][-1])
         while tokens[index][-1] != ")":
             arg_args, index = parse_tokens_as_args(tokens, index)
             macro_args.append(arg_args)
@@ -905,7 +927,7 @@ def parse_macro_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[sta
                 parser_error(tokens[name_index], f"macro '&t' takes exactly {len(sw_declared_macros_args[macro.name])} argument(s) but {len(macro_args)} were given")
     macro.kind = kind.BLOCK
     macro_index = 0
-    macro_tks = sw_declared_macros_tokens[macro.name].copy() #translates to memcpy()
+    macro_tks = sw_declared_macros_tokens[macro.name].copy() #translates to memcpy() or TODO: da_copy()
     # debug("[MACROTKS]", macro_tks)
     debug("[MACROARGS]: ", macro_args)
     for tk_idx, tk in enumerate(macro_tks):
@@ -1366,6 +1388,9 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
             return iota(-1), arg_type, arg_ptrl
 
         case kind.OPERAND:
+            if (not state.prevToken[-1].isnumeric()) and (not tokenizable(state.prevToken[-1])) and (not state.prevToken[-1] in ")]") and state.name == "-":
+                out_writeln(f"%{iota()} = add i64 0, 0")
+                prev_iota, prev_type, prev_ptrl = iota(-1), sw_type.INT, 0
             debug("Compiling operand:", state.name, "FROM", (prev_type, prev_ptrl))
             # out_writeln(f"; Operand: {state.name}", level)
             arg_iota, arg_type, arg_ptrl = compile_stack[-1]
@@ -1397,6 +1422,7 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 out_writeln(f"store {rlt(ntype, nptrl)} %{niota}, {rlt(prev_type, prev_ptrl+1)} %{prev_ptr}", level)
                 # else:
                 #     compiler_error(state, f"Types don't match: {human_type[prev_type]+"*"*prev_ptrl} != {human_type[arg_type]+"*"*arg_ptrl}")
+                return arg_iota, arg_type, arg_ptrl
             nprev_iota = prev_iota
             narg_iota, chsn_type, chsn_ptrl = cast(arg_iota, arg_type, arg_ptrl, state.type, state.ptr_level, level)
             match state.name:
