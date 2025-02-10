@@ -1,7 +1,12 @@
 import os
 from dataclasses import dataclass
 from sys import *
+from colorama import Fore as f
+from pprint import pp
 argc = len(argv)
+
+def rgb_text(r, g, b):
+    return f"\033[38;2;{r};{g};{b}m"
 
 iota_counter = 0
 def iota(reset: int = 0):
@@ -13,11 +18,11 @@ def iota(reset: int = 0):
     return iota_counter
 
 DEBUGGING = "-d" in argv
-debug_level = 0
+parse_indentation = 0
 def debug(*args, **kwargs) -> None:
     if not DEBUGGING:
         return
-    print(": "*debug_level, end="")
+    print(rgb_text(75,75,75)+"│ "*(parse_indentation+1)+f.RESET, end="")
     print(*args, **kwargs)
 
 @dataclass
@@ -63,22 +68,16 @@ def parser_error(token, prompt, errno = -1):
     if errno:
         exit(errno)
 
-def compiler_error(state, prompt, errno = -1):
-    ogToken = state.ogToken
-    assert ogToken, "IS NONE"
-    if state.lastToken:
-        lastToken = state.lastToken
-    else:
-        state.ogToken = ogToken
-    print(get_tk_pos(ogToken)+":", "ERROR:", prompt.replace("&t", ogToken[-1]))
-    with open(ogToken[0], "r") as fp:
+def compiler_error(node, prompt, errno = -1):
+    token = node.token
+    print(get_tk_pos(token)+":", "ERROR:", prompt.replace("&t", token[-1]))
+    with open(token[0], "r") as fp:
         content = fp.read()
-        debug("ogToken:", ogToken)
-        debug("lastToken:", lastToken)
-        print("\n  "+content.split("\n")[ogToken[1]])
-        print("  "+" "*ogToken[2]+"^"*(lastToken[2] - ogToken[2] + 1))
-        print("  "+" "*ogToken[2]+"| here")
-    exit(errno)
+        print("\n  "+content.split("\n")[token[1]])
+        print("  "+" "*token[2]+"^")
+        print("  "+" "*token[2]+"| here")
+    if errno:
+        exit(errno)
 
 def get_tk_name(token: tuple[str, int, int, str]):
     return token[-1]
@@ -93,8 +92,6 @@ human_operands = [
     "*",
     "/",
     "!",
-    "++",
-    "--",
     "==",
     "!=",
     ">",
@@ -107,7 +104,7 @@ human_operands = [
 ]
 
 human_unarys = [
-    "+"
+    "+",
     "-"
 ]
 
@@ -144,7 +141,8 @@ def find_next(line: str) -> int:
             idx = line[idx+1:].find("\"")
             return max(1, idx+2)
         if c in human_operands and (idx == 0 or line[idx-1] == " "):
-            if line[idx+1] in human_operands:
+            # debug(f"CHECKING LINE: '{line[idx:idx+2]}'")
+            if line[idx:idx+2] in human_operands:
                 return max(1, idx+2)
             return max(1, idx+1)
         if not uisalnum(c):
@@ -229,6 +227,11 @@ class kind:
     BLOCK = iota()
     EXTERN = iota()
     RET = iota()
+    VARDECL = iota()
+    VARREF = iota()
+    INC = iota()
+    DEC = iota()
+    UNARY = iota()
 
     NULL = iota()
 
@@ -242,12 +245,35 @@ human_kind = [
     "block",
     "extern",
     "return",
+    "vardecl",
+    "varref",
+    "increment",
+    "decrement",
+    "unary",
 
     "null",
 ]
 
 declared_funcs = {}
+func_namespaces = {}
+global_vars  = {}
 declared_strings = []
+all_declared_vars = []
+
+current_namespace: dict[str, Node]
+
+def add_usr_var(node):
+    global global_vars, all_declared_vars, current_namespace
+    if parse_indentation:
+        debug("[USINGNAMESPACE]: current_namespace")
+        namespace = current_namespace
+    else:
+        debug("[USINGNAMESPACE]: global_vars")
+        namespace = global_vars
+    if node.name() in namespace:
+        parser_error(node.token, "Redeclaration of variable '&t'")
+    namespace[node.name()] = node
+    all_declared_vars.append(node.name())
 
 class Manager:
     def __init__(self, items):
@@ -272,6 +298,9 @@ class Manager:
         self.pointer+=1
         return self.items[self.pointer-1]
     
+    def goback(self):
+        self.set(self.pointer-1)
+
     def expect(self, str):
         res = self.consume()
         return res if res[-1] == str else parser_error(res, f"Expected '{str}' but got '&t'")
@@ -293,33 +322,38 @@ tokens = Manager(parsed_tokens)
 def get_importance(token):
     tkname = token[-1]
     match tkname:
-        case "*": return 2
-        case "/": return 2
         case "+": return 1
         case "-": return 1
+        case "*": return 2
+        case "/": return 2
+        case "=": return 3
 
         case _:   return 0
 
 def print_node(node):
-    debug(f"[ <{human_kind[node.kind][:3]}>: {node.name()} ", end="")
+    if not DEBUGGING:
+        return
+    print(f"[ <{human_kind[node.kind][:3]}>: {node.name()} ", end="")
     # for arg in node.args:
-    #     debug(arg.token[-1])
+    #     print(arg.token[-1])
     for idx, arg in enumerate(node.args):
         if idx:
-            debug(", ", end="")
+            print(", ", end="")
         else:
-            debug(" ", end="")
+            print(" ", end="")
         print_node(arg)
     if node.block:
         print_node(node.block)
-    debug(f" </{human_kind[node.kind][:3]}> ]", end="")
+    print(f" </{human_kind[node.kind][:3]}> ]", end="")
 
 nodes = list()
 
 def parse():
+    global parse_indentation
+    parse_indentation = 0
     while tokens.more():
-        if (state:=parse_primary()).kind != kind.NULL:
-            nodes.append(state)
+        if (node:=parse_primary()).kind != kind.NULL:
+            nodes.append(node)
 
 def parse_type(ptrl):
     typename = tokens.consume()
@@ -335,6 +369,8 @@ def parse_named_arg():
     node = Node()
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
+    debug("[NAMEDARG]:", node.name())
+    add_usr_var(node)
     if tokens.current()[-1] != ")":
         tokens.expect(",")
     return node
@@ -358,13 +394,19 @@ def parse_block():
     return block
     
 def parse_funcdecl(node):
+    global current_namespace, parse_indentation
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
     declared_funcs[node.name()] = node
+    func_namespaces[node.name()] = {}
+    current_namespace = func_namespaces[node.name()]
     debug("[FUNCDESC]", node.name(), ":", hlt(node.type, node.ptrl))
     tokens.expect("(")
+    parse_indentation += 1
     node.args = parse_named_args()
+    parse_indentation -= 1
     node.block = parse_block()
+    current_namespace = global_vars
     
 def parse_funcall(node):
     debug("[FUNCALL]:", node.name())
@@ -400,22 +442,49 @@ def parse_extern(node):
     tokens.expect("(")
     node.args = parse_unnamed_args()
 
+def parse_vardecl(node):
+    node.type, node.ptrl = parse_type(0)
+    node.token = tokens.consume()
+    add_usr_var(node)
+    debug("[VARDECL]:", node.name())
+    if tokens.current()[-1] == "=":
+        tokens.consume()
+        node.block = parse_expression(0)
+
+def parse_varref(node):
+    if node.name() in current_namespace:
+        namespace = current_namespace
+    else:
+        namespace = global_vars
+    var_info = namespace[node.name()]
+    debug("[VARREF]:", node.name)
+    node.type, node.ptrl = var_info.type, var_info.ptrl
+    if tokens.current()[-1] == "++":
+        node.block = Node()
+        node.block.token = tokens.consume()
+        node.block.kind = kind.INC
+
 def parse_primary():
     token = tokens.consume()
-    debug("[TOBEPARSED]:", token[-1])
+    debug(F"[PRIMARY]: '{token[-1]}'")
     node = Node()
     node.token = token
+    debug("[UNARYFOUND]")
 
     if token[-1].isnumeric():
         node.kind = kind.NUM_LIT
         
     elif represents_string(token[-1]):
         node.kind = kind.STR_LIT
-        node.val = len(declared_strings)
-        declared_strings.append(llvm_escape(node.name()))
-
+        escaped_string = llvm_escape(node.name())
+        if escaped_string not in declared_strings:
+            declared_strings.append(llvm_escape(node.name()))
+        node.val = declared_strings.index(escaped_string)
+        
     elif token[-1] in human_unarys:
-        node.kind = kind.OPERAND
+        debug("[UNARYFOUND]")
+        node.kind = kind.UNARY
+        node.block = parse_primary()
         
     elif token[-1] == "(":
         node.kind = kind.EXPRESSION
@@ -441,7 +510,24 @@ def parse_primary():
             node.args.append(parse_expression(0))
         else:
             debug("[RETURN]: no args")
-        
+
+    elif token[-1] == "++":
+        node.kind = kind.INC
+        node.block = Node()
+        node.block.kind = kind.VARREF
+        node.block.token = tokens.consume()
+        parse_varref(node.block)
+        node.type, node.ptrl = node.block.type, node.block.ptrl
+
+    elif token[-1] in human_type:
+        node.kind = kind.VARDECL
+        tokens.goback()
+        parse_vardecl(node)
+
+    elif token[-1] in all_declared_vars:
+        node.kind = kind.VARREF
+        parse_varref(node)
+
     elif token[-1] in declared_funcs:
         node.kind = kind.FUNCCALL
         parse_funcall(node)
@@ -451,6 +537,7 @@ def parse_primary():
     return node
 
 def parse_expression(importance): # <- wanted to write priority
+    global parse_indentation; parse_indentation += 1
     node = parse_primary()
     while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands:
         debug("[parsing tk]", tokens.current())
@@ -461,8 +548,10 @@ def parse_expression(importance): # <- wanted to write priority
         op_node.args.append(node)
         right_node = parse_expression(get_importance(op_token))
         op_node.args.append(right_node)
+        op_node.type, op_node.ptrl = node.type, node.ptrl
         node = op_node
     
+    parse_indentation += -1
     return node
 
 parse()
@@ -477,88 +566,173 @@ def out_writeln(content, level):
 
 for node in nodes:
     print_node(node)
-    print()
+    if DEBUGGING:
+        print()
 
-def compile_node(state, level):
+def compile_debug(func):
+    def wrapper(*args, **kwargs):
+        ret = func(*args, *kwargs)
+        if DEBUGGING:
+            out_writeln(f"; compiled node with kind: {human_kind[args[0].kind]} and type {rlt(args[0].type, args[0].ptrl)}", args[1])
+        return ret
+    return wrapper
+
+@compile_debug
+def compile_node(node, level):
     nlevel = level+1
     arg_names = []
-    debug("[COMPILING]:", human_kind[state.kind])
-    match state.kind:
+    debug("[COMPILING]:", human_kind[node.kind])
+    match node.kind:
+        case kind.EXPRESSION:
+            for arg in node.args:
+                compile_node(arg, level)
+                node.type, node.ptrl = arg.type, arg.ptrl
+
         case kind.RET:
-            for arg in state.args:
+            for arg in node.args:
                 argn = compile_node(arg, level)
-            if len(state.args):
-                out_writeln(f"ret {rlt(state.args[-1].type, state.args[-1].ptrl)} {argn}", level)
+            if len(node.args):
+                out_writeln(f"ret {rlt(node.args[-1].type, node.args[-1].ptrl)} {argn}", level)
             else:
                 out_writeln("ret void", level)
         
         case kind.BLOCK:
-            for arg in state.args:
+            for arg in node.args:
                 compile_node(arg, level)
 
         case kind.STR_LIT:
-            state.type = sw_type.CHAR
-            state.ptrl = 1
-            return f"@str.{state.val}"
+            node.type = sw_type.CHAR
+            node.ptrl = 1
+            return f"@str.{node.val}"
 
         case kind.NUM_LIT:
-            state.type = sw_type.INT
-            state.ptrl = 0
-            return f"{state.name()}"
+            node.type = sw_type.INT
+            node.ptrl = 0
+            return f"{node.name()}"
+
+        case kind.UNARY:
+            if node.name() == "-":
+                if node.block.kind == kind.NUM_LIT:
+                    result = "-"+compile_node(node.block, level)
+                    node.type, node.ptrl = node.block.type, node.block.ptrl
+                    return result
+                else:
+                    result = compile_node(node.block, level)
+                    out_writeln(f"%{iota()} = sub {node.type, node.ptrl} 0, {result}", level)
+            else:
+                return compile_node(node.block, level)
+
+        case kind.VARDECL:
+            if level:
+                out_writeln(f"%{node.name()} = alloca {rlt(node.type, node.ptrl)}", level)
+                if node.block:
+                    to_assign = compile_node(node.block, level)
+                    out_writeln(f"store {rlt(node.type, node.ptrl)} {to_assign}, ptr %{node.name()}", level)
+            else:
+                if node.block.kind == kind.NUM_LIT:
+                    argn = compile_node(node.block, level)
+                out_writeln(f"@{node.name()} = global {rlt(node.type, node.ptrl)} {argn}", level)
+
+        case kind.VARREF:
+            if node.name() in global_vars:
+                out_writeln(f"%{iota()} = load {rlt(node.type, node.ptrl)}, ptr @{node.name()}", level)
+            else:
+                out_writeln(f"%{iota()} = load {rlt(node.type, node.ptrl)}, ptr %{node.name()}", level)
+            return_iota = iota(-1)
+            if node.block:
+                if node.block.kind == kind.INC:
+                    out_writeln(f"%{iota()} = add {rlt(node.type, node.ptrl)} %{iota(-1)-1}, 1", level)
+                    if node.name() in global_vars:
+                        out_writeln(f"store {rlt(node.type, node.ptrl)} %{iota(-1)}, ptr @{node.name()}", level)
+                    else:
+                        out_writeln(f"store {rlt(node.type, node.ptrl)} %{iota(-1)}, ptr #{node.name()}", level)
+
+            return f"%{return_iota}"
+        
+        case kind.INC:
+            if node.block.block:
+                compiler_error(node.block.block, "Expected an rvalue")
+            if node.block.name() in global_vars:
+                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl)}, ptr @{node.block.name()}", level)
+            else:
+                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl)}, ptr %{node.block.name()}", level)
+            out_writeln(f"%{iota()} = add {rlt(node.block.type, node.block.ptrl)} %{iota(-1)-1}, 1", level)
+            if node.block.name() in global_vars:
+                out_writeln(f"store {rlt(node.block.type, node.block.ptrl)} %{iota(-1)}, ptr @{node.block.name()}", level)
+            else:
+                out_writeln(f"store {rlt(node.block.type, node.block.ptrl)} %{iota(-1)}, ptr %{node.block.name()}", level)
+            return f"%{iota(-1)}"
 
         case kind.OPERAND:
-            for arg in state.args:
-                arg_names.append(compile_node(arg, level))
-                state.ptrl, state.type = arg.ptrl, arg.type
-            match state.name():
-                case "+":
-                    out_writeln(f"%{iota()} = add {rlt(state.type, state.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
-                    return f"%{iota(-1)}"
-                case "-":
-                    out_writeln(f"%{iota()} = sub {rlt(state.type, state.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
-                    return f"%{iota(-1)}"
-                case "*":
-                    out_writeln(f"%{iota()} = mul {rlt(state.type, state.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
-                    return f"%{iota(-1)}"
-                case "/":
-                    out_writeln(f"%{iota()} = sdiv {rlt(state.type, state.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
-                    return f"%{iota(-1)}"
+            if node.name() == "=":
+                dest_node = node.args[0]
+                src_node = node.args[1]
+                if dest_node.name() in global_vars:
+                    dest = f"@{dest_node.name()}"
+                else:
+                    dest = f"%{dest_node.name()}"
+                debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
+                src = compile_node(src_node, level)
+                out_writeln(f"store {rlt(dest_node.type, dest_node.ptrl)} {src}, ptr {dest}", level)
+                return src
+            else:
+                dest_node = node.args[0]
+                src_node = node.args[1]
+                for idx, arg in enumerate(node.args):
+                    arg_names.append(compile_node(arg, level))
+                    if not idx:
+                        node.ptrl, node.type = arg.ptrl, arg.type # operand type is type of the first operand
+                match node.name():
+                    case "+":
+                        out_writeln(f"%{iota()} = add {rlt(node.type, node.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
+                        return f"%{iota(-1)}"
+                    case "-":
+                        out_writeln(f"%{iota()} = sub {rlt(node.type, node.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
+                        return f"%{iota(-1)}"
+                    case "*":
+                        out_writeln(f"%{iota()} = mul {rlt(node.type, node.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
+                        return f"%{iota(-1)}"
+                    case "/":
+                        out_writeln(f"%{iota()} = sdiv {rlt(node.type, node.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
+                        return f"%{iota(-1)}"
 
         case kind.EXTERN:
-            out_write(f"declare {rlt(state.type, state.ptrl)} @{state.name()}(", level)
-            for idx, arg in enumerate(state.args):
+            out_write(f"declare {rlt(node.type, node.ptrl)} @{node.name()}(", level)
+            for idx, arg in enumerate(node.args):
                 if idx:
                     out_write(", ", 0)
                 out_write(rlt(arg.type, arg.ptrl), 0)
             out_writeln(")\n", 0)
         
         case kind.FUNCCALL:
-            funcinfo = declared_funcs[state.name()]
-            for arg in state.args:
+            funcinfo = declared_funcs[node.name()]
+            for arg in node.args:
                 arg_names.append(compile_node(arg, level))
             if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
-                out_write(f"call {rlt(funcinfo.type, funcinfo.ptrl)} @{state.name()}(", level); iota()
+                out_write(f"call void @{node.name()}(", level); iota()
             else:
-                out_write(f"%{iota()} = call {rlt(funcinfo.type, funcinfo.ptrl)} @{state.name()}(", level)
+                out_write(f"%{iota()} = call {rlt(funcinfo.type, funcinfo.ptrl)} @{node.name()}(", level)
             for idx, arg in enumerate(arg_names):
                 if idx:
                     out_write(", ", 0)
-                out_write(f"{rlt(state.args[idx].type, state.args[idx].ptrl)} {arg}", 0)
+                out_write(f"{rlt(node.args[idx].type, node.args[idx].ptrl)} {arg}", 0)
             out_writeln(")", 0)
         
         case kind.FUNCDECL:
-            iota(1)
-            out_write(f"define {rlt(state.type, state.ptrl)} @{state.name()}(", level)
-            for idx, arg in enumerate(state.args):
+            global iota_counter
+            iota_counter = -1
+            out_write(f"define {rlt(node.type, node.ptrl)} @{node.name()}(", level)
+            for idx, arg in enumerate(node.args):
                 if idx:
                     out_write(", ", 0)
                 out_write(f"{rlt(arg.type, arg.ptrl)} %{iota()}", 0)
             out_writeln(") {", 0)
-            iota(1)
-            for arg in state.args:
+            iota_counter = -1
+            for arg in node.args:
                 out_writeln(f"%{arg.name()} = alloca {rlt(arg.type, arg.ptrl)}", nlevel)
                 out_writeln(f"store {rlt(arg.type, arg.ptrl)} %{iota()}, ptr %{arg.name()}", nlevel)
-            compile_node(state.block, nlevel)
+            iota()
+            compile_node(node.block, nlevel)
             out_writeln("}\n", 0)
     return f"%{iota(-1)}"
 

@@ -1,11 +1,7 @@
 #include <stdio.h>
 
-void hello(char* string) {
-    printf("Hello, %s", string);
+void main(int argc, char** argv) {
+    int num = 0;
+    printf("%i\n", ++num);
     return;
-}
-
-int main(int argc, char** argv) {
-    hello("World!");
-    return 0;
 }
