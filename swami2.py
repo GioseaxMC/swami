@@ -322,11 +322,11 @@ tokens = Manager(parsed_tokens)
 def get_importance(token):
     tkname = token[-1]
     match tkname:
-        case "+": return 1
-        case "-": return 1
-        case "*": return 2
-        case "/": return 2
-        case "=": return 3
+        case "=": return 1
+        case "+": return 2
+        case "-": return 2
+        case "*": return 3
+        case "/": return 3
 
         case _:   return 0
 
@@ -545,10 +545,10 @@ def parse_expression(importance): # <- wanted to write priority
         op_node = Node()
         op_node.token = op_token
         op_node.kind = kind.OPERAND
+        op_node.type, op_node.ptrl = node.type, node.ptrl
         op_node.args.append(node)
         right_node = parse_expression(get_importance(op_token))
         op_node.args.append(right_node)
-        op_node.type, op_node.ptrl = node.type, node.ptrl
         node = op_node
     
     parse_indentation += -1
@@ -618,7 +618,7 @@ def compile_node(node, level):
                     return result
                 else:
                     result = compile_node(node.block, level)
-                    out_writeln(f"%{iota()} = sub {node.type, node.ptrl} 0, {result}", level)
+                    out_writeln(f"%{iota()} = sub {rlt(node.block.type, node.block.ptrl)} 0, {result}", level)
             else:
                 return compile_node(node.block, level)
 
