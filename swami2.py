@@ -91,6 +91,8 @@ human_operands = [
     "-",
     "*",
     "/",
+    "++",
+    "--",
     "!",
     "==",
     "!=",
@@ -100,7 +102,8 @@ human_operands = [
     "<=",
     "&",
     ".",
-    "<>"
+    "<>",
+    "["
 ]
 
 human_unarys = [
@@ -189,8 +192,9 @@ class Node:
         self.type = 0
         self.ptrl = 0
         self.block = 0
-    
-    def name(self):
+        self.name = ""
+
+    def tkname(self):
         return self.token[-1]
 
 OUTFILE_PATH = "./main.ll"
@@ -232,6 +236,8 @@ class kind:
     INC = iota()
     DEC = iota()
     UNARY = iota()
+    PTREF = iota()
+    GETPTR = iota()
 
     NULL = iota()
 
@@ -245,11 +251,13 @@ human_kind = [
     "block",
     "extern",
     "return",
-    "vardecl",
-    "varref",
+    "var declaration",
+    "var reference",
     "increment",
     "decrement",
     "unary",
+    "pointer reference",
+    "get pointer",
 
     "null",
 ]
@@ -270,10 +278,10 @@ def add_usr_var(node):
     else:
         debug("[USINGNAMESPACE]: global_vars")
         namespace = global_vars
-    if node.name() in namespace:
+    if node.tkname() in namespace:
         parser_error(node.token, "Redeclaration of variable '&t'")
-    namespace[node.name()] = node
-    all_declared_vars.append(node.name())
+    namespace[node.tkname()] = node
+    all_declared_vars.append(node.tkname())
 
 class Manager:
     def __init__(self, items):
@@ -327,13 +335,14 @@ def get_importance(token):
         case "-": return 2
         case "*": return 3
         case "/": return 3
+        case "[": return 4
 
         case _:   return 0
 
 def print_node(node):
     if not DEBUGGING:
         return
-    print(f"[ <{human_kind[node.kind][:3]}>: {node.name()} ", end="")
+    print(f"[ <{human_kind[node.kind][:3]}>: {node.tkname()} ", end="")
     # for arg in node.args:
     #     print(arg.token[-1])
     for idx, arg in enumerate(node.args):
@@ -360,7 +369,11 @@ def parse_type(ptrl):
     if typename[-1] not in human_type:
         parser_error(typename, "Expected typename but got '&t'")
     rtype = human_type.index(typename[-1])
-    if rtype == sw_type.PTR:
+    if rtype == sw_type.VOID:
+        if ptrl:
+            rtype = sw_type.CHAR
+        return rtype, ptrl
+    elif rtype == sw_type.PTR:
         return parse_type(ptrl+1)
     else:
         return rtype, ptrl
@@ -369,7 +382,8 @@ def parse_named_arg():
     node = Node()
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
-    debug("[NAMEDARG]:", node.name())
+    node.name = node.tkname()
+    debug("[NAMEDARG]:", node.tkname())
     add_usr_var(node)
     if tokens.current()[-1] != ")":
         tokens.expect(",")
@@ -397,10 +411,10 @@ def parse_funcdecl(node):
     global current_namespace, parse_indentation
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
-    declared_funcs[node.name()] = node
-    func_namespaces[node.name()] = {}
-    current_namespace = func_namespaces[node.name()]
-    debug("[FUNCDESC]", node.name(), ":", hlt(node.type, node.ptrl))
+    declared_funcs[node.tkname()] = node
+    func_namespaces[node.tkname()] = {}
+    current_namespace = func_namespaces[node.tkname()]
+    debug("[FUNCDESC]", node.tkname(), ":", hlt(node.type, node.ptrl))
     tokens.expect("(")
     parse_indentation += 1
     node.args = parse_named_args()
@@ -409,8 +423,10 @@ def parse_funcdecl(node):
     current_namespace = global_vars
     
 def parse_funcall(node):
-    debug("[FUNCALL]:", node.name())
+    debug("[FUNCALL]:", node.tkname())
+    called = declared_funcs[node.tkname()]
     tokens.expect("(")
+    node.type, node.ptrl = called.type, called.ptrl
     while tokens.current()[-1] != ")":
         node.args.append(parse_expression(0))
         if tokens.current()[-1] != ")":
@@ -437,8 +453,8 @@ def parse_unnamed_args():
 def parse_extern(node):
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
-    debug("[EXTERN]: name:", node.name(), rlt(node.type, node.ptrl))
-    declared_funcs[node.name()] = node
+    debug("[EXTERN]: name:", node.tkname(), rlt(node.type, node.ptrl))
+    declared_funcs[node.tkname()] = node
     tokens.expect("(")
     node.args = parse_unnamed_args()
 
@@ -446,17 +462,17 @@ def parse_vardecl(node):
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
     add_usr_var(node)
-    debug("[VARDECL]:", node.name())
+    debug("[VARDECL]:", node.tkname())
     if tokens.current()[-1] == "=":
         tokens.consume()
         node.block = parse_expression(0)
 
 def parse_varref(node):
-    if node.name() in current_namespace:
+    if node.tkname() in current_namespace:
         namespace = current_namespace
     else:
         namespace = global_vars
-    var_info = namespace[node.name()]
+    var_info = namespace[node.tkname()]
     debug("[VARREF]:", node.name)
     node.type, node.ptrl = var_info.type, var_info.ptrl
     if tokens.current()[-1] == "++":
@@ -469,16 +485,15 @@ def parse_primary():
     debug(F"[PRIMARY]: '{token[-1]}'")
     node = Node()
     node.token = token
-    debug("[UNARYFOUND]")
 
     if token[-1].isnumeric():
         node.kind = kind.NUM_LIT
         
     elif represents_string(token[-1]):
         node.kind = kind.STR_LIT
-        escaped_string = llvm_escape(node.name())
+        escaped_string = llvm_escape(node.tkname())
         if escaped_string not in declared_strings:
-            declared_strings.append(llvm_escape(node.name()))
+            declared_strings.append(llvm_escape(node.tkname()))
         node.val = declared_strings.index(escaped_string)
         
     elif token[-1] in human_unarys:
@@ -494,7 +509,13 @@ def parse_primary():
     elif token[-1] == "{":
         node.kind = kind.BLOCK
         node = parse_block()
-        
+    
+    elif token[-1] == "&":
+        node.kind = kind.GETPTR
+        node.block = parse_primary()
+        node.type = node.block.type
+        node.ptrl = node.block.ptrl+1
+
     elif token[-1] == "func":
         node.kind = kind.FUNCDECL
         parse_funcdecl(node)
@@ -549,6 +570,8 @@ def parse_expression(importance): # <- wanted to write priority
         op_node.args.append(node)
         right_node = parse_expression(get_importance(op_token))
         op_node.args.append(right_node)
+        if op_node.tkname() == "[":
+            tokens.expect("]")
         node = op_node
     
     parse_indentation += -1
@@ -569,24 +592,69 @@ for node in nodes:
     if DEBUGGING:
         print()
 
+def sizeof(type: int, ptrl: int): # in bytes please
+    debug(rlt(type, ptrl))
+    debug({(type, ptrl)})
+    if ptrl:
+        return 8
+    match type:
+        case sw_type.PTR:
+            return 8
+        case sw_type.INT:
+            return 8
+        case sw_type.VOID:
+            return 0
+        case sw_type.CHAR:
+            return 1
+        case sw_type.BOOL:
+            return 1
+    return -1
+
+def cast(src, src_type, src_ptrl, dest_type, dest_ptrl, level):
+    typecmp = bool(src_ptrl) - bool(dest_ptrl) # > 0 
+    isptr = src_ptrl or dest_ptrl
+    bothp = src_ptrl and dest_ptrl
+    if (src_type, src_ptrl) == (dest_type, dest_ptrl):
+        debug("Not casting, cuz same")
+        return iota(-1), dest_type, dest_ptrl
+    if bothp:
+        out_writeln(f"%{iota()} = bitcast {rlt(src_type, src_ptrl)} {src} to {rlt(dest_type, dest_ptrl)}", level)
+    elif isptr:
+        if typecmp > 0:
+            out_writeln(f"%{iota()} = ptrtoint {rlt(src_type, src_ptrl)} {src} to {rlt(dest_type, dest_ptrl)}", level)
+        else:
+            out_writeln(f"%{iota()} = inttoptr {rlt(src_type, src_ptrl)} {src} to {rlt(dest_type, dest_ptrl)}", level)
+    else:
+        if dest_type == sw_type.BOOL:
+            out_writeln(f"%{iota()} = icmp ne {rlt(src_type, src_ptrl)} {src}, 0", level)
+        else:
+            if sizeof(dest_type, dest_ptrl) > sizeof(src_type, src_ptrl):
+                out_writeln(f"%{iota()} = zext {rlt(src_type, src_ptrl)} {src} to {rlt(dest_type, dest_ptrl)}", level)
+            elif sizeof(dest_type, dest_ptrl) < sizeof(src_type, src_ptrl):
+                out_writeln(f"%{iota()} = trunc {rlt(src_type, src_ptrl)} {src} to {rlt(dest_type, dest_ptrl)}", level)
+            else:
+                out_writeln(f"%{iota()} = bitcast {rlt(src_type, src_ptrl)} {src} to {rlt(dest_type, dest_ptrl)}", level)
+    return iota(-1), dest_type, dest_ptrl #iota -1 : casted val
+
 def compile_debug(func):
     def wrapper(*args, **kwargs):
         ret = func(*args, *kwargs)
         if DEBUGGING:
-            out_writeln(f"; compiled node with kind: {human_kind[args[0].kind]} and type {rlt(args[0].type, args[0].ptrl)}", args[1])
+            out_writeln(f"; compiled node with kind: {human_kind[args[0].kind]} :: {rlt(args[0].type, args[0].ptrl)}", args[1])
         return ret
     return wrapper
 
 @compile_debug
-def compile_node(node, level):
+def compile_node(node, level, assignable = 0):
     nlevel = level+1
     arg_names = []
     debug("[COMPILING]:", human_kind[node.kind])
     match node.kind:
         case kind.EXPRESSION:
             for arg in node.args:
-                compile_node(arg, level)
+                arg_names.append(compile_node(arg, level))
                 node.type, node.ptrl = arg.type, arg.ptrl
+            return f"{arg_names[-1]}"
 
         case kind.RET:
             for arg in node.args:
@@ -608,73 +676,115 @@ def compile_node(node, level):
         case kind.NUM_LIT:
             node.type = sw_type.INT
             node.ptrl = 0
-            return f"{node.name()}"
-
+            return f"{node.tkname()}"
+                
         case kind.UNARY:
-            if node.name() == "-":
+            result = compile_node(node.block, level)
+            node.type, node.ptrl = node.block.type, node.block.ptrl
+            if node.tkname() == "-":
                 if node.block.kind == kind.NUM_LIT:
-                    result = "-"+compile_node(node.block, level)
-                    node.type, node.ptrl = node.block.type, node.block.ptrl
+                    result = "-"+result
                     return result
                 else:
-                    result = compile_node(node.block, level)
                     out_writeln(f"%{iota()} = sub {rlt(node.block.type, node.block.ptrl)} 0, {result}", level)
             else:
-                return compile_node(node.block, level)
+                return result
 
         case kind.VARDECL:
             if level:
-                out_writeln(f"%{node.name()} = alloca {rlt(node.type, node.ptrl)}", level)
+                out_writeln(f"%{node.tkname()} = alloca {rlt(node.type, node.ptrl)}", level)
                 if node.block:
                     to_assign = compile_node(node.block, level)
-                    out_writeln(f"store {rlt(node.type, node.ptrl)} {to_assign}, ptr %{node.name()}", level)
+                    if node.block.ptrl and node.ptrl and node.type == sw_type.CHAR:
+                        out_writeln(f"store ptr {to_assign}, ptr %{node.tkname()}", level)
+                    elif node.block.kind != kind.NUM_LIT and (node.type, node.ptrl) != (node.block.type, node.block.ptrl):
+                        compiler_error(node, f"Types don't match in assignment '{hlt(node.type, node.ptrl)}' != '{hlt(node.block.type, node.block.ptrl)}'")
+                    elif node.block.kind == kind.NUM_LIT:
+                        out_writeln(f"store {rlt(node.type, 0)} {to_assign}, ptr %{node.tkname()}", level)
+                    else:
+                        out_writeln(f"store {rlt(node.type, node.ptrl)} {to_assign}, ptr %{node.tkname()}", level)
+                    # out_writeln(f"store {rlt(node.type, node.ptrl)} {to_assign}, ptr %{node.tkname()}", level)
             else:
                 if node.block.kind == kind.NUM_LIT:
                     argn = compile_node(node.block, level)
-                out_writeln(f"@{node.name()} = global {rlt(node.type, node.ptrl)} {argn}", level)
+                if node.ptrl:
+                    out_writeln(f"@{node.tkname()} = global {rlt(node.type, node.ptrl)} null", level)
+                else:
+                    out_writeln(f"@{node.tkname()} = global {rlt(node.type, node.ptrl)} {argn}", level)
 
         case kind.VARREF:
-            if node.name() in global_vars:
-                out_writeln(f"%{iota()} = load {rlt(node.type, node.ptrl)}, ptr @{node.name()}", level)
+            if assignable:
+                node.ptrl += 1
+                if node.tkname() in global_vars:
+                    return f"@{node.tkname()}"
+                else:
+                    return f"%{node.tkname()}"
             else:
-                out_writeln(f"%{iota()} = load {rlt(node.type, node.ptrl)}, ptr %{node.name()}", level)
-            return_iota = iota(-1)
-            if node.block:
-                if node.block.kind == kind.INC:
-                    out_writeln(f"%{iota()} = add {rlt(node.type, node.ptrl)} %{iota(-1)-1}, 1", level)
-                    if node.name() in global_vars:
-                        out_writeln(f"store {rlt(node.type, node.ptrl)} %{iota(-1)}, ptr @{node.name()}", level)
-                    else:
-                        out_writeln(f"store {rlt(node.type, node.ptrl)} %{iota(-1)}, ptr #{node.name()}", level)
-
-            return f"%{return_iota}"
+                if node.tkname() in global_vars:
+                    out_writeln(f"%{iota()} = load {rlt(node.type, node.ptrl)}, ptr @{node.tkname()}", level)
+                else:
+                    out_writeln(f"%{iota()} = load {rlt(node.type, node.ptrl)}, ptr %{node.tkname()}", level)
+                return_iota = iota(-1)
+                if node.block:
+                    if node.block.kind == kind.INC:
+                        out_writeln(f"%{iota()} = add {rlt(node.type, node.ptrl)} %{iota(-1)-1}, 1", level)
+                        if node.tkname() in global_vars:
+                            out_writeln(f"store {rlt(node.type, node.ptrl)} %{iota(-1)}, ptr @{node.tkname()}", level)
+                        else:
+                            out_writeln(f"store {rlt(node.type, node.ptrl)} %{iota(-1)}, ptr %{node.tkname()}", level)
+                return f"%{return_iota}"
         
         case kind.INC:
-            if node.block.block:
-                compiler_error(node.block.block, "Expected an rvalue")
-            if node.block.name() in global_vars:
-                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl)}, ptr @{node.block.name()}", level)
+            if node.block.tkname() in global_vars:
+                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl)}, ptr @{node.block.tkname()}", level)
             else:
-                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl)}, ptr %{node.block.name()}", level)
+                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl)}, ptr %{node.block.tkname()}", level)
             out_writeln(f"%{iota()} = add {rlt(node.block.type, node.block.ptrl)} %{iota(-1)-1}, 1", level)
-            if node.block.name() in global_vars:
-                out_writeln(f"store {rlt(node.block.type, node.block.ptrl)} %{iota(-1)}, ptr @{node.block.name()}", level)
+            if node.block.tkname() in global_vars:
+                out_writeln(f"store {rlt(node.block.type, node.block.ptrl)} %{iota(-1)}, ptr @{node.block.tkname()}", level)
             else:
-                out_writeln(f"store {rlt(node.block.type, node.block.ptrl)} %{iota(-1)}, ptr %{node.block.name()}", level)
+                out_writeln(f"store {rlt(node.block.type, node.block.ptrl)} %{iota(-1)}, ptr %{node.block.tkname()}", level)
             return f"%{iota(-1)}"
 
         case kind.OPERAND:
-            if node.name() == "=":
+            if node.tkname() == "=":
                 dest_node = node.args[0]
                 src_node = node.args[1]
-                if dest_node.name() in global_vars:
-                    dest = f"@{dest_node.name()}"
+                if dest_node.tkname() in global_vars:
+                    dest = f"@{dest_node.tkname()}"
                 else:
-                    dest = f"%{dest_node.name()}"
+                    dest = f"{compile_node(dest_node, level, 1)}"
                 debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
                 src = compile_node(src_node, level)
-                out_writeln(f"store {rlt(dest_node.type, dest_node.ptrl)} {src}, ptr {dest}", level)
+                if src_node.ptrl and dest_node.ptrl and dest_node.type == sw_type.CHAR:
+                    out_writeln(f"store ptr {src}, ptr {dest}", level)
+                elif src_node.kind != kind.NUM_LIT and (src_node.type, src_node.ptrl) != (dest_node.type, dest_node.ptrl):
+                    compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.type, dest_node.ptrl)}' != '{hlt(src_node.type, src_node.ptrl)}'")
+                elif src_node.kind == kind.NUM_LIT:
+                    out_writeln(f"store {rlt(dest_node.type, 0)} {src}, ptr {dest}", level)
+                else:
+                    out_writeln(f"store {rlt(dest_node.type, dest_node.ptrl)} {src}, ptr {dest}", level)
+                    
                 return src
+            elif node.tkname() == "[":
+                dest_node = node.args[0]
+                src_node = node.args[1]
+                if dest_node.kind == kind.EXPRESSION:
+                    for arg in node.args:
+                        arg_names.append(compile_node(arg, level))
+                    out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr {arg_names[0]}", level)
+                    out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i32 {arg_names[1]}", level)
+                else:
+                    src = compile_node(node.args[1], level)
+                    out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr %{dest_node.tkname()}", level)
+                    out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i32 {src}", level)
+                if not assignable:
+                    out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl-1)}, ptr %{iota(-1)-1}", level)
+                    node.type, node.ptrl = dest_node.type, dest_node.ptrl-1
+                else:
+                    node.type, node.ptrl = dest_node.type, dest_node.ptrl
+                return f"%{iota(-1)}"
+                    
             else:
                 dest_node = node.args[0]
                 src_node = node.args[1]
@@ -682,7 +792,7 @@ def compile_node(node, level):
                     arg_names.append(compile_node(arg, level))
                     if not idx:
                         node.ptrl, node.type = arg.ptrl, arg.type # operand type is type of the first operand
-                match node.name():
+                match node.tkname():
                     case "+":
                         out_writeln(f"%{iota()} = add {rlt(node.type, node.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
                         return f"%{iota(-1)}"
@@ -696,8 +806,13 @@ def compile_node(node, level):
                         out_writeln(f"%{iota()} = sdiv {rlt(node.type, node.ptrl)} {arg_names[0]}, {arg_names[1]}", level)
                         return f"%{iota(-1)}"
 
+        case kind.GETPTR:
+            node.kind = node.block.kind
+            name = compile_node(node.block, level, 1)
+            return f"{name}"
+
         case kind.EXTERN:
-            out_write(f"declare {rlt(node.type, node.ptrl)} @{node.name()}(", level)
+            out_write(f"declare {rlt(node.type, node.ptrl)} @{node.tkname()}(", level)
             for idx, arg in enumerate(node.args):
                 if idx:
                     out_write(", ", 0)
@@ -705,13 +820,13 @@ def compile_node(node, level):
             out_writeln(")\n", 0)
         
         case kind.FUNCCALL:
-            funcinfo = declared_funcs[node.name()]
+            funcinfo = declared_funcs[node.tkname()]
             for arg in node.args:
                 arg_names.append(compile_node(arg, level))
             if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
-                out_write(f"call void @{node.name()}(", level); iota()
+                out_write(f"call void @{node.tkname()}(", level); iota()
             else:
-                out_write(f"%{iota()} = call {rlt(funcinfo.type, funcinfo.ptrl)} @{node.name()}(", level)
+                out_write(f"%{iota()} = call {rlt(funcinfo.type, funcinfo.ptrl)} @{node.tkname()}(", level)
             for idx, arg in enumerate(arg_names):
                 if idx:
                     out_write(", ", 0)
@@ -721,7 +836,7 @@ def compile_node(node, level):
         case kind.FUNCDECL:
             global iota_counter
             iota_counter = -1
-            out_write(f"define {rlt(node.type, node.ptrl)} @{node.name()}(", level)
+            out_write(f"define {rlt(node.type, node.ptrl)} @{node.tkname()}(", level)
             for idx, arg in enumerate(node.args):
                 if idx:
                     out_write(", ", 0)
@@ -729,13 +844,15 @@ def compile_node(node, level):
             out_writeln(") {", 0)
             iota_counter = -1
             for arg in node.args:
-                out_writeln(f"%{arg.name()} = alloca {rlt(arg.type, arg.ptrl)}", nlevel)
-                out_writeln(f"store {rlt(arg.type, arg.ptrl)} %{iota()}, ptr %{arg.name()}", nlevel)
+                out_writeln(f"%{arg.tkname()} = alloca {rlt(arg.type, arg.ptrl)}", nlevel)
+                out_writeln(f"store {rlt(arg.type, arg.ptrl)} %{iota()}, ptr %{arg.tkname()}", nlevel)
             iota()
             compile_node(node.block, nlevel)
             out_writeln("}\n", 0)
+        
+        case _:
+            compiler_error(node, "Unexpected unqualified token '&t'")
     return f"%{iota(-1)}"
-
 
 def compile_nodes(nodes):
     iota(1)

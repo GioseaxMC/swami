@@ -1267,7 +1267,6 @@ def compile_statement(state, level: int = 0) -> tuple[int, int, int]:
                 else:
                     out_write(f"{rlt(arg.type, arg.ptr_level)} %{iota()}")
                     current_func_arg_iotas.append(iota(-1))
-            len_args = len(state.args)
             out_writeln(") {")
             if state.name == "main" :
                 out_writeln("entry:")

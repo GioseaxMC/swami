@@ -1,13 +1,10 @@
 extern void printf(ptr char, <>)
+extern ptr void malloc(int)
 
-int integer = 2;
+func int get_int() { return 69; }
 
 func void main(int argc, ptr ptr char argv) {
 
-    printf("integer: %i\n", (2 + 4 * 5) );
-
-    printf("integer: %i\n", ( integer = 0 + (1 * -4) * -integer )  );
-    
+    printf("Catastrophic failure\n");
     return;
 }
-

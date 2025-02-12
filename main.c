@@ -1,7 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 
-void main(int argc, char** argv) {
-    int num = 0;
-    printf("%i\n", ++num);
-    return;
+int main() {
+
+    int x = 69;
+    int* y = (&x);
+    y += 0;
+    x = y[0];
 }
