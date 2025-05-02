@@ -1,10 +1,15 @@
 extern void printf(ptr char, <>)
-extern ptr void malloc(int)
 
-func int get_int() { return 69; }
+int x = 0;
 
 func void main(int argc, ptr ptr char argv) {
 
-    printf("Catastrophic failure\n");
+    while (x <= 64) {
+        printf("Number: %i\n", x,);
+        x = x+1;
+    };
+
+    || && !
+
     return;
 }

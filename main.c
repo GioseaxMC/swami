@@ -1,10 +1,14 @@
 #include <stdio.h>
-#include <stdlib.h>
 
-int main() {
+int main(void) {
+    int x = 1;
+    int y = x<<4;
 
-    int x = 69;
-    int* y = (&x);
-    y += 0;
-    x = y[0];
+    printf("Hello World %i\n", x, y);
+
+    if (x && y) {
+        printf("Hello World %i\n", x, y);
+    }
+
+    return 0;
 }
