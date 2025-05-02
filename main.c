@@ -1,14 +1,10 @@
 #include <stdio.h>
 
 int main(void) {
-    int x = 1;
-    int y = x<<4;
+    int x = 0;
 
-    printf("Hello World %i\n", x, y);
+    x = 3+2++;
 
-    if (x && y) {
-        printf("Hello World %i\n", x, y);
-    }
-
+    printf("Hello World %i\n", x);
     return 0;
 }
