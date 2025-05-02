@@ -186,9 +186,7 @@ def lex_tokens(line: str):
             yield col, sline
             line = ""
 
-def lex_lines(file_path: str):
-    with open(file_path, "r") as fp:
-        file_contents = fp.read()
+def lex_lines(file_contents, file_path):
     for row, line in enumerate(file_contents.split("\n")):
         for col, word in lex_tokens(line):
             yield file_path, row, col, word
@@ -202,7 +200,7 @@ class Node:
         self.type = -1
         self.ptrl = -1
         self.block = 0
-        self.name = ""
+        # self.name = ""
 
     def find_by_name(self, name):
         for idx, arg in enumerate(self.children):
@@ -260,6 +258,7 @@ class kind:
     WHILE = iota()
     WORD = iota()
     SEMI = iota()
+    MACRODECL = iota()
 
     NULL = iota()
 
@@ -285,6 +284,7 @@ human_kind = [
     "while",
     "word",
     "semicolon",
+    "macro declaration",
 
     "null",
 ]
@@ -295,6 +295,8 @@ global_vars  = {}
 declared_strings = []
 all_declared_vars = []
 declared_structs = {}
+macro_tokens: dict[list[tuple]] = {}
+declared_macros: dict[Node] = {}
 
 current_namespace = global_vars
 
@@ -314,6 +316,14 @@ def add_usr_var(node):
 class Manager:
     def __init__(self, items):
         self.items = items
+        self.items.append(
+            (
+                items[-1][0],
+                items[-1][1],
+                items[-1][2] + len(items[-1][-1]),
+                "<EOT> -> end of tokens"
+            )
+        )
         self.pointer = 0
         self.assumed = []
 
@@ -325,7 +335,7 @@ class Manager:
         self.pointer += 1
     
     def peek(self):
-        assert self.pointer+1 < len(self.items), "Cannot peek non exsisting token"
+        assert self.pointer+1 < len(self.items)-1, "Cannot peek non exsisting token"
         return self.items[self.pointer+1]
 
     def current(self):
@@ -356,12 +366,18 @@ class Manager:
         return self.items[self.pointer-1]
 
     def more(self):
-        return self.pointer < len(self.items)
+        return self.pointer < len(self.items)-1
 
     def set(self, nptr):
         self.pointer = nptr
 
-parsed_tokens = list(lex_lines(INFILE_PATH))
+try:
+    with open(INFILE_PATH, "r") as fp:
+        source_codents = fp.read()
+except:
+    print("ERROR: failed to open input file:", INFILE_PATH)
+
+parsed_tokens = list(lex_lines(source_codents, INFILE_PATH))
 debug("[PARSEDTKS]:", [tk[-1] for tk in parsed_tokens])
 tokens = Manager(parsed_tokens)
 
@@ -405,7 +421,16 @@ def print_node(node, indent = 0):
     if node.block:
         iprint(indent, "block: ")
         print_node(node.block, nindent)
-    
+
+def assume_global(token):
+    global parse_indentation
+    if parse_indentation:
+        parser_error(token, "the '&t' instruction must be used at a global level")
+
+def forbid_global(token):
+    global parse_indentation
+    if not parse_indentation:
+        parser_error(token, "the '&t' instruction cannot be used at a global (and so static) level")
 
 nodes = list()
 
@@ -418,6 +443,7 @@ def parse():
 
 def parse_incdec():
     node = 0
+    debug("parsing incdec", tokens.current()[-1])
     if tokens.current()[-1] == "++":
         node = Node()
         node.token = tokens.consume()
@@ -447,23 +473,143 @@ def parse_named_arg(closer):
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
     node.name = node.tkname()
+    if not tokenizable(node.tkname()):
+        parser_error("Invalid name for argument")
     debug("[NAMEDARG]:", node.tkname())
     if tokens.current()[-1] != closer:
         tokens.expect(",")
     return node
 
-def parse_named_children(closer):
+def parse_named_args(closer):
     children = []
     while tokens.current()[-1] != closer:
         children.append(parse_named_arg(closer))
-    tokens.consume()
+    tokens.expect(closer)
     return children
+
+def parse_untyped_arg(closer):
+    node = Node()
+    node.token = tokens.consume()
+    node.name = node.tkname()
+    if not tokenizable(node.tkname()):
+        parser_error("Invalid name for argument")
+    debug("[NAMEDARG]:", node.tkname())
+    if tokens.current()[-1] != closer:
+        tokens.expect(",")
+    return node
+
+def parse_untyped_args(closer):
+    children = []
+    while tokens.current()[-1] != closer:
+        children.append(parse_untyped_arg(closer))
+    tokens.expect(closer)
+    return children
+
+def parse_macro_tokens():
+    body_tokens = []
+    macro_parsing_level = 0
+    m_parsing = 1
+    tokens.expect("{")
+    debug("starting macro tokens parsing from", tokens.current())
+    while m_parsing:
+        token = tokens.consume()
+        tkname = token[-1]
+        debug("[MACRO]: parsing", tkname)
+        if tkname == "{":
+            macro_parsing_level+=1
+        if tkname == "}":
+            if macro_parsing_level:
+                macro_parsing_level-=1
+                body_tokens.append(token)
+            else:
+                m_parsing = 0
+        else:
+            body_tokens.append(token)
+    return body_tokens
+
+def parse_macro_decl():
+    node = Node()
+    node.token = tokens.consume()
+    tokens.expect("(")
+    node.children = parse_untyped_args(")")
+    macro_tokens[node.tkname()] = parse_macro_tokens()
+    declared_macros[node.tkname()] = node
+    return node
+
+def parse_macro_args():
+    body_tokens = []
+    m_level = 0
+    running = 1
+    while running:
+        token = tokens.consume()
+        tkname = token[-1]
+        debug("[MACROARG]: parsing", tkname, "with indentation", m_level)
+        if tkname == "(":
+            m_level+=1
+        if tkname == ")":
+            if m_level:
+                m_level-=1
+                body_tokens.append(token)
+            else:
+                tokens.pointer -= 1 # no one will see this shit
+                running = 0
+        elif tkname == "," and not m_level: 
+            tokens.pointer -= 1 # no one will see this shit
+            running = 0
+        else:
+            body_tokens.append(token)
+    return body_tokens
+
+def parse_macro_call():
+    global tokens, parse_indentation
+    node = Node()
+    node.token = tokens.prev()
+    macro_args = []
+    tokens.expect("(")
+    while tokens.current()[-1] != ")":
+        debug("macro-token-before:", tokens.current()[-1])
+        macro_args.append(parse_macro_args())
+        debug("macro-token-after:", tokens.current()[-1])
+        if tokens.current()[-1] != ")":
+            tokens.expect(",")
+    tokens.expect(")")
+
+    if len(macro_args) != len(declared_macros[node.tkname()].children):
+        compiler_error(node, f"Expected {len(declared_macros[node.tkname()].children)} tokens but got {len(macro_args)}")
+
+    current_macro_tks = macro_tokens[node.tkname()]
+    arg_names = [x.tkname() for x in declared_macros[node.tkname()].children]
+
+    for idx, arg in enumerate(current_macro_tks):
+        debug(idx, arg)
+        if arg[-1] in arg_names:
+            arg_idx = arg_names.index(arg[-1])
+            for tk in macro_args[arg_idx]:
+                current_macro_tks.pop(idx)
+                current_macro_tks.insert(idx, tk)
+
+    og_tokens = tokens
+    tokens = Manager(current_macro_tks)
+
+    debug("starting macro manager from:", tokens.current())
+    old_pi = parse_indentation
+    parse_indentation = -1
+    while tokens.more():
+
+        debug("parsing macro_body:", tokens.current())
+        node.children.append(parse_expression(0))
+        tokens.expect(";")
+        
+    parse_indentation = old_pi
+
+    tokens = og_tokens
+    return node;
 
 def parse_block():
     tokens.expect("{")
     block = Node()
+    block.token = tokens.current()
     block.kind = kind.BLOCK
-    block.token = tokens.prev()
     while tokens.current()[-1] != "}":
         block.children.append(parse_expression(0))
         tokens.expect(";")
@@ -474,19 +620,21 @@ def parse_funcdecl(node):
     global current_namespace, parse_indentation
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
+    if not tokenizable(node.tkname()):
+        parser_error(node.token, "Invalid function name")
     declared_funcs[node.tkname()] = node
     func_namespaces[node.tkname()] = {}
     current_namespace = func_namespaces[node.tkname()]
     debug("[FUNCDESC]", node.tkname(), ":", hlt(node.type, node.ptrl))
     tokens.expect("(")
     parse_indentation += 1
-    node.children = parse_named_children(")")
+    node.children = parse_named_args(")")
     for arg in node.children:
         add_usr_var(arg)
     parse_indentation -= 1
     node.block = parse_block()
     current_namespace = global_vars
-    
+
 def parse_funcall(node):
     debug("[FUNCALL]:", node.tkname())
     called = declared_funcs[node.tkname()]
@@ -508,7 +656,7 @@ def parse_unnamed_arg(closer):
         tokens.expect(",")
     return node
 
-def parse_unnamed_children(closer):
+def parse_unnamed_args(closer):
     children = []
     while tokens.current()[-1] != closer:
         children.append(parse_unnamed_arg(closer))
@@ -520,7 +668,7 @@ def parse_extern(node):
     debug("[EXTERN]: name:", node.tkname(), rlt(node.type, node.ptrl))
     declared_funcs[node.tkname()] = node
     tokens.expect("(")
-    node.children = parse_unnamed_children(")")
+    node.children = parse_unnamed_args(")")
     tokens.expect(")")
 
 def parse_struct(node):
@@ -529,12 +677,14 @@ def parse_struct(node):
     human_type.append(node.tkname())
     llvm_type.append(f"%struct.{node.tkname()}")
     tokens.expect("{")
-    node.children = parse_named_children("}")
+    node.children = parse_named_args("}")
     declared_structs[node.tkname()] = node
 
 def parse_vardecl(node):
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
+    if not tokenizable(node.tkname()):
+        parser_error(node.token, "Invalid variable name")
     add_usr_var(node)
     debug("[VARDECL]:", node.tkname())
     if tokens.current()[-1] == "=":
@@ -551,9 +701,54 @@ def parse_varref(node):
         parser_error(node.token, "'&t' is undeclared")
     
     var_info = namespace[node.tkname()]
-    debug("[VARREF]:", node.name)
+    debug("[VARREF]:", node.tkname())
     node.type, node.ptrl = var_info.type, var_info.ptrl
     node.block = parse_incdec()
+
+def parse_inclusion() -> list[Node]:
+    global tokens, parse_indentation
+    nodes = []
+    opener = tokens.consume()
+    if opener[-1] not in ("{","("):
+        parser_error(opener, "wrong include opener, must use:\n\t- '(' for local files\n\t- '{' for compiler directory files")
+    
+    filepath_tk = tokens.consume()
+
+    if not represents_string(filepath_tk[-1]):
+        parser_error(filepath_tk, "the file name has to be a string")
+    
+    filepath = filepath_tk[-1][1:-1]
+    
+    og_tokens = tokens
+    try:
+        with open(filepath, "r") as fp:
+            contents = fp.read()
+    except Exception as e:
+        parser_error(filepath_tk, f"failed to open file &t while trying to include - {e}")
+    
+    debug("READING SRCODE from:", contents)
+
+    parsed_tokens = list(lex_lines(contents, filepath))
+    debug("[PARSEDTKS]:", [tk[-1] for tk in parsed_tokens])
+    
+    tokens = Manager(parsed_tokens)
+    og_pi = parse_indentation
+    parse_indentation = 0
+
+    while tokens.more():
+        if (node:=parse_primary()).kind != kind.NULL:
+            nodes.append(node)
+
+    parse_indentation = og_pi
+    tokens = og_tokens
+
+    if opener[-1] == "(":
+        tokens.expect(")")
+    else:
+        tokens.expect("}")
+
+    return nodes
+    
 
 def parse_primary():
     token = tokens.consume()
@@ -594,18 +789,22 @@ def parse_primary():
         node.ptrl = node.block.ptrl+1
 
     elif token[-1] == "func":
+        assume_global(token)
         node.kind = kind.FUNCDECL
         parse_funcdecl(node)
 
     elif token[-1] == "extern":
+        assume_global(token)
         node.kind = kind.EXTERN
         parse_extern(node)
     
     elif token[-1] == "struct":
+        assume_global(token)
         node.kind = kind.STRUCT
         parse_struct(node)
 
     elif token[-1] == "return":
+        forbid_global(token)
         node.kind = kind.RET
         if tokens.current()[-1] != ";":
             debug("[RETURN]: has children")
@@ -624,6 +823,7 @@ def parse_primary():
         # node.type, node.ptrl = node.block.type, node.block.ptrl
 
     elif token[-1] == "if":
+        forbid_global(token)
         node.kind = kind.IF
         node.block = parse_primary()
         node.children.append(parse_primary())
@@ -633,9 +833,19 @@ def parse_primary():
         # tokens.assume(";")
 
     elif token[-1] == "while":
+        forbid_global(token)
         node.kind = kind.WHILE
         node.children.append(parse_primary())
         node.block = parse_primary()
+
+    elif token[-1] == "macro":
+        assume_global(token)
+        node = parse_macro_decl()
+        node.kind = kind.MACRODECL
+        
+    elif token[-1] == "include": #TODO: support include
+        node.kind = kind.BLOCK
+        node.children = parse_inclusion()
 
     elif token[-1] in human_type:
         node.kind = kind.VARDECL
@@ -650,9 +860,18 @@ def parse_primary():
         node.kind = kind.FUNCCALL
         parse_funcall(node)
 
-    elif uisalnum(token[-1]):
-        node.kind = kind.WORD
-        node.block = parse_incdec()
+    elif token[-1] in macro_tokens:
+        node = parse_macro_call()
+        node.kind = kind.BLOCK
+        node.token = token
+
+    elif tokenizable(token[-1]):
+        if parse_indentation:
+            node.kind = kind.WORD
+            node.block = parse_incdec()
+        else:
+            parser_error(token, "Unknown instruction '&t'")
+            
     
     else:
         parser_error(token, "Unexpected symbol '&t'")
@@ -662,6 +881,7 @@ def parse_primary():
 def parse_expression(importance): # <- wanted to write priority
     global parse_indentation; parse_indentation += 1
     node = parse_primary()
+    debug("parsing primary from expression parser:", node.tkname())
     while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands:
         debug("[parsing tk]", tokens.current())
         op_token = tokens.consume()
@@ -1116,7 +1336,10 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"br label %cond.{branch_id}", nlevel)
             out_writeln(f"done.{branch_id}:", level)
             
-
+        # purposelly: uncompilables - not compilable
+        case kind.MACRODECL:
+            if DEBUGGING:
+                out_writeln("; '{node.tkname()}' macro declared here", level)
 
         case _:
             compiler_error(node, "Unexpected unqualified token '&t' cannot be compiled")

@@ -5,20 +5,20 @@ extern ptr void malloc(int)
 extern void free(ptr void)
 extern void exit(int)
 
-ptr void str_null = cast(ptr void, 0);
+ptr void str_null = 0
 
 macro _load(ptr) { ptr[0] }
 
 macro addptr(p, offset) { cast(ptr void, (cast(int, p)+offset)) }
 
 func bool is_letter(char letter) {
-    return (letter >= 65 && letter <= 90) or (letter >= 97 || letter <= 122);
+    return (letter >= 65 && letter <= 90) || (letter >= 97 || letter <= 122);
 }
 
 struct string {
-	ptr char data;
-	int length;
-	int capacity;
+	ptr char data,
+	int length,
+	int capacity,
 }
 
 macro str_assert(cond, message) {
@@ -29,7 +29,7 @@ func int next_powt(int len) {
     int temp = 1;
     while (temp <= len) {
         temp = temp * 2;
-    }
+    };
     return temp;
 }
 
@@ -63,7 +63,7 @@ func void str_insert(ptr string _str, int _pos, ptr char _new) {
     int inserted = 0;
     int idx = 0;
     while (str.length+1 > idx) {
-        if(idx == _pos) {
+        if (idx == _pos) {
             while (new_len > inserted) {
                 str.data[idx+inserted] = _new[inserted];
                 inserted++;

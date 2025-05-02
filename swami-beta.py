@@ -935,7 +935,7 @@ def parse_macro_call(index: int, tokens: tuple[str, int, int, str]) -> tuple[sta
             debug("[MACRO] stating argument:", tk[-1])
             st_idx = sw_declared_macros_args[macro.name].index(tk[-1])
             debug(sw_declared_macros_args[macro.name])
-            # debug(macro_tks)
+            # debug(macro_tks)  
             macro_tks.pop(tk_idx)
             for idx, arg in enumerate(macro_args[st_idx]):
                 macro_tks.insert(tk_idx+idx, arg)
