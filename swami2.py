@@ -895,11 +895,11 @@ def compile_node(node, level, assignable = 0):
                     for arg in node.children:
                         arg_names.append(compile_node(arg, level))
                     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr {arg_names[0]}", level)
-                    out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i64 {arg_names[1]}", level)
+                    out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i32 {arg_names[1]}", level)
                 else:
                     src = compile_node(node.children[1], level)
                     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr %{dest_node.tkname()}", level)
-                    out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i64 {src}", level)
+                    out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i32 {src}", level)
                 if not assignable:
                     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl-1)}, ptr %{iota(-1)-1}", level)
                     node.type, node.ptrl = dest_node.type, dest_node.ptrl-1
@@ -915,7 +915,7 @@ def compile_node(node, level, assignable = 0):
                 field_id = struct_node.find_by_name(src_node.tkname())
                 field_node = struct_node.children[field_id]
                 debug("[FIELD TYPE]:", hlt(field_node.type, field_node.ptrl))
-                out_writeln(f"%{iota()} = getelementptr {rlt(struct_node.type, struct_node.ptrl)}, ptr {dest}, i32 0, i32 {field_id}", level)
+                out_writeln(f"%{iota()} = getelementptr {rlt(struct_node.type, struct_node.ptrl)}, ptr {dest}, i32 {field_id}", level)
                 if assignable:
                     node.type, node.ptrl = field_node.type, field_node.ptrl+1
                 else:
