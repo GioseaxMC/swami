@@ -1,17 +1,9 @@
-include ( "string.sw" )
+extern void printf(ptr char, <>)
 
-macro da_array(type, name) {
-    struct name {
-        ptr type items,
-        int count,
-        int length,
-    };
-}
-
-da_array(int, integers)
+include { "examples/stdlib.sw" }
 
 func int main() {
-    
+    printf("Hello World!\n");
 
     return 0;
 }

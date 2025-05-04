@@ -13,9 +13,12 @@ A low level, compiled language written in python
 ## How to use
 ### File: main.sw
 ```c
+extern void printf(ptr char, <>)
+
 func int main() {
-  println("Hello World!")
-  return 0;
+    printf("Hello World!\n");
+
+    return 0;
 }
 ```
 ### Run:
@@ -26,8 +29,8 @@ $ main
 Hello World!
 ```
 ### Simple cat implementation: cat.sw
-```c
-include "stdlib.sw";
+```rs
+include { "stdlib.sw" };
 
 func int main(int argc, ptr ptr char argv) {
   int i = 1;
@@ -35,7 +38,7 @@ func int main(int argc, ptr ptr char argv) {
   int size;
   while (i < argc) {
     contents = read_file(argv[i], &size);
-    println(contents)
+    printf("%s\n", contents);
     i++;
   }
   return 0;
@@ -46,8 +49,11 @@ func int main(int argc, ptr ptr char argv) {
 $ python swami.py cat.sw -o cat
 $ cat main.sw
 
+extern void printf(ptr char, <>)
+
 func int main() {
-  println("Hello World!")
-  return 0;
+    printf("Hello World!\n");
+
+    return 0;
 }
 ```
