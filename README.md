@@ -30,7 +30,7 @@ Hello World!
 ```
 ### Simple cat implementation: cat.sw
 ```rs
-include { "stdlib.sw" };
+include { "stdlib.sw" }
 
 func int main(int argc, ptr ptr char argv) {
   int i = 1;
