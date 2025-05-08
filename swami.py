@@ -210,7 +210,7 @@ class Node:
         for idx, arg in enumerate(self.children):
             if arg.tkname() == name:
                 return idx
-        compiler_error(node, f"'{name}' is not an attribute")
+        compiler_error(node, f"'{name}' is not an attribute for '{self.tkname()}'")
 
     def tkname(self):
         return self.token[-1]
@@ -243,25 +243,31 @@ class kind:
     NUM_LIT = iota(1)
     STR_LIT = iota()
     OPERAND = iota()
-    
+
     EXPRESSION = iota()
     FUNCDECL = iota()
     FUNCCALL = iota()
+    
     BLOCK = iota()
     EXTERN = iota()
     RET = iota()
+    
     VARDECL = iota()
     VARREF = iota()
     INC = iota()
+    
     DEC = iota()
     UNARY = iota()
     PTREF = iota()
+    
     GETPTR = iota()
     STRUCT = iota()
     IF = iota()
+    
     WHILE = iota()
     WORD = iota()
     SEMI = iota()
+    
     MACRODECL = iota()
     CAST = iota()
 
@@ -271,24 +277,31 @@ human_kind = [
     "number",
     "string",
     "operation",
+    
     "expression",
     "func decl",
     "func call",
+    
     "block",
     "extern",
     "return",
+    
     "var declaration",
     "var reference",
     "increment",
+    
     "decrement",
     "unary",
     "pointer reference",
+    
     "get pointer",
     "struct",
     "if",
+    
     "while",
     "word",
     "semicolon",
+    
     "macro declaration",
     "cast",
 
@@ -405,13 +418,13 @@ def get_importance(token):
         case "==": return 8
         
         case "[": return 9
-        case ".": return 10
 
         case "+": return 10
         case "-": return 10
         case "*": return 11
         case "/": return 11
 
+        case ".": return 12
 
         case _:   return 0
 
@@ -480,10 +493,13 @@ def parse_type(ptrl):
 def parse_named_arg(closer):
     node = Node()
     node.type, node.ptrl = parse_type(0)
-    node.token = tokens.consume()
-    node.name = node.tkname()
-    if not tokenizable(node.tkname()):
-        parser_error(node.token, "Invalid name for argument")
+    if node.type != sw_type.ANY:
+        node.token = tokens.consume()
+        node.name = node.tkname()
+        if not tokenizable(node.tkname()):
+            parser_error(node.token, "Invalid name for argument")
+    else:
+        node.token = tokens.current()
     debug("[NAMEDARG]:", node.tkname())
     if tokens.current()[-1] != closer:
         tokens.expect(",")
@@ -877,7 +893,7 @@ def parse_primary():
         tokens.goback()
         parse_vardecl(node)
 
-    elif token[-1] in all_declared_vars:
+    elif token[-1] in current_namespace or token[-1] in global_vars:
         node.kind = kind.VARREF
         parse_varref(node)
 
@@ -952,6 +968,12 @@ def sizeof(type: int, ptrl: int): # in bytes please
         case sw_type.BOOL:
             return 1
     return -1
+
+def type_cmp(type1, ptrl1, type2, ptrl2):
+    if ptrl1 and ptrl2:
+        return 1
+    else:
+        return type1, ptrl1 == type2, ptrl2
 
 def cast(src: str, src_type: int, src_ptrl: int, dest_type: int, dest_ptrl: int, level: int) -> tuple[str, int, int]:
     typecmp = bool(src_ptrl) - bool(dest_ptrl) # > 0 
@@ -1030,6 +1052,10 @@ def compile_node(node, level, assignable = 0):
             for arg in node.children:
                 ret = compile_node(arg, level)
                 node.type, node.ptrl = arg.type, arg.ptrl
+                if arg.kind == kind.RET:
+                    debug("[BLOCK]->[RETURNING] -- kind = NULL")
+                    node.kind = kind.RET
+                    break
             return ret
 
         case kind.STR_LIT:
@@ -1052,7 +1078,8 @@ def compile_node(node, level, assignable = 0):
                 else:
                     out_writeln(f"%{iota()} = sub {rlt(node.block.type, node.block.ptrl)} 0, {result}", level)
             elif node.tkname() == "!":
-                out_writeln(f"%{iota()} = icmp eq {rlt(node.block.type, node.block.ptrl)} {result}, 0", level)
+                result = cast(result, node.block.type, node.block.ptrl, sw_type.INT, 0, level)[0]
+                out_writeln(f"%{iota()} = icmp eq i64 {result}, 0", level)
                 node.type, node.ptrl = sw_type.BOOL, 0
                 return f"%{iota(-1)}"
             else:
@@ -1143,10 +1170,10 @@ def compile_node(node, level, assignable = 0):
                     out_writeln(f"store ptr {src}, ptr {dest}", level)
                 elif src_node.kind == kind.NUM_LIT:
                     out_writeln(f"store {rlt(dest_node.type, 0)} {src}, ptr {dest}", level)
-                elif (src_node.type, src_node.ptrl) != (dest_node.type, dest_node.ptrl):
+                elif not type_cmp(src_node.type, src_node.ptrl, dest_node.type, dest_node.ptrl):
                     compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.type, dest_node.ptrl)}' != '{hlt(src_node.type, src_node.ptrl)}'")
                 else:
-                    out_writeln(f"store {rlt(dest_node.type, dest_node.ptrl-1)} {src}, ptr {dest}", level)
+                    out_writeln(f"store {rlt(dest_node.type, dest_node.ptrl)} {src}, ptr {dest}", level) ## edited
                 if src_node.block:
                     incdec(node, src_node.kind, level)
                 return src
@@ -1314,19 +1341,32 @@ def compile_node(node, level, assignable = 0):
         
         case kind.FUNCCALL:
             arg_types = []
+            if node.tkname() in ("va_start", "va_end"):
+                to_call = "llvm."+node.tkname()
+            else:
+                to_call = node.tkname()
             funcinfo = declared_funcs[node.tkname()]
+
+            var_length = 0
+            if len(funcinfo.children):
+                if funcinfo.children[-1].type == sw_type.ANY:
+                    var_length = 1
+                
+            if not var_length and len(funcinfo.children) != len(node.children):
+                compiler_error(node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}")
+            
             for idx, arg in enumerate(node.children):
                 arg_names.append(compile_node(arg, level))
 
-                if funcinfo.children[-1].type != sw_type.ANY:
+                if var_length:
                     if arg.type == -1:
                         arg.type, arg.ptrl = funcinfo.children[idx].type, funcinfo.children[idx].ptrl
 
-                    elif (arg.type, arg.ptrl) != (funcinfo.children[idx].type, funcinfo.children[idx].ptrl):
+                    elif not type_cmp(arg.type, arg.ptrl, funcinfo.children[idx].type, funcinfo.children[idx].ptrl):
                         compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx].type, funcinfo.children[idx].ptrl)} != {hlt(arg.type, arg.ptrl)}")
             
             if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
-                out_write(f"call void @{node.tkname()}(", level); iota()
+                out_write(f"call void @{to_call}(", level); iota()
             else:
                 out_write(f"%{iota()} = call {rlt(funcinfo.type, funcinfo.ptrl)} @{node.tkname()}(", level)
             for idx, arg in enumerate(arg_names):
@@ -1342,12 +1382,16 @@ def compile_node(node, level, assignable = 0):
             for idx, arg in enumerate(node.children):
                 if idx:
                     out_write(", ", 0)
-                out_write(f"{rlt(arg.type, arg.ptrl)} %{iota()}", 0)
+                if arg.type != sw_type.ANY:
+                    out_write(f"{rlt(arg.type, arg.ptrl)} %{iota()}", 0)
+                else:
+                    out_write(f"...", 0)
             out_writeln(") {", 0)
             iota_counter = -1
             for arg in node.children:
-                out_writeln(f"%{arg.tkname()} = alloca {rlt(arg.type, arg.ptrl)}", nlevel)
-                out_writeln(f"store {rlt(arg.type, arg.ptrl)} %{iota()}, ptr %{arg.tkname()}", nlevel)
+                if arg.type != sw_type.ANY:
+                    out_writeln(f"%{arg.tkname()} = alloca {rlt(arg.type, arg.ptrl)}", nlevel)
+                    out_writeln(f"store {rlt(arg.type, arg.ptrl)} %{iota()}, ptr %{arg.tkname()}", nlevel)
             iota()
             compile_node(node.block, nlevel)
             out_writeln("}\n", 0)
@@ -1362,20 +1406,29 @@ def compile_node(node, level, assignable = 0):
 
         case kind.IF:
             compiled_node = compile_node(node.block, nlevel)
+
+            then_node = node.children[0]
             branch_id = iota()
             has_else = len(node.children) > 1
+
             condition = cast(compiled_node, node.block.type, node.block.ptrl, sw_type.BOOL, 0, level)[0]
+            
             if has_else:
+                else_node = node.children[1]
                 out_writeln(f"br i1 {condition}, label %then.{branch_id}, label %else.{branch_id}", level)
             else:
                 out_writeln(f"br i1 {condition}, label %then.{branch_id}, label %done.{branch_id}", level)
             out_writeln(f"then.{branch_id}:", level)
-            compile_node(node.children[0], nlevel)
+            compile_node(then_node, nlevel)
             if has_else:
-                out_writeln(f"br label %done.{branch_id}", nlevel)
+                if then_node.kind != kind.RET:
+                    out_writeln(f"br label %done.{branch_id}", nlevel)
                 out_writeln(f"else.{branch_id}:", level)
-                compile_node(node.children[1], nlevel)
-            out_writeln(f"br label %done.{branch_id}", nlevel)
+                compile_node(else_node, nlevel)
+                then_node = else_node # this is so that even when this branch is not ran, the code can continue with the then_node
+            debug("[BLOCK]->[RETURNED] -- kind =", human_kind[then_node.kind])
+            if then_node.kind != kind.RET:
+                out_writeln(f"br label %done.{branch_id}", nlevel)
             out_writeln(f"done.{branch_id}:", level)
 
         case kind.WHILE:
@@ -1419,4 +1472,4 @@ compile_nodes(nodes)
 
 out.close()
 
-os.system(f"clang {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module -target x86_64-64w-mingw32")
+os.system(f"clang {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module -target x86_64-w64-mingw32")

@@ -144,7 +144,6 @@ func void main() {
 
     str_set(&str, "1111");
 
-
     str_add(&str, "89");
 
     str_insert(&str, 0, "[");

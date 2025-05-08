@@ -40,7 +40,7 @@ func int main(int argc, ptr ptr char argv) {
     contents = read_file(argv[i], &size);
     printf("%s\n", contents);
     i++;
-  }
+  };
   return 0;
 }
 ```
@@ -56,4 +56,5 @@ func int main() {
 
     return 0;
 }
+
 ```

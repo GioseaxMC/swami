@@ -1,9 +1,12 @@
-extern void printf(ptr char, <>)
-
 include { "examples/stdlib.sw" }
 
 func int main() {
-    printf("Hello World!\n");
+    str_make(str, "Hello World!\n");
+    printf( c(str) );
 
     return 0;
 }
+
+
+
+
