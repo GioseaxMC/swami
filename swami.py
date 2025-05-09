@@ -5,6 +5,21 @@ from colorama import Fore as f
 from pprint import pp
 argc = len(argv)
 
+import argparse
+
+parser = argparse.ArgumentParser(description="Swami compiler:\n\tusage: <python> swami.py main.sw -o main")
+
+parser.add_argument('--backend', default="clang", help="the language backend to use to compile llvm (default clang)")
+parser.add_argument('-d', action='store_true', help="Enable debug mode")
+
+parser.add_argument('sourcecode', help="The swami file")
+
+parser.add_argument('-o', help="The output file for both the .ll file and the executable", required=1)
+
+parser.add_argument('--cflags', help="Custom flags directly passed to the llvm compiler", default="")
+
+args = parser.parse_args()
+
 def rgb_text(r, g, b):
     return f"\033[38;2;{r};{g};{b}m"
 
@@ -19,7 +34,8 @@ def iota(reset: int = 0):
 
 parse_indentation = 0
 
-DEBUGGING = "-d" in argv
+DEBUGGING = args.d
+
 def debug(*children, **kwchildren) -> None:
     if not DEBUGGING:
         return
@@ -226,17 +242,9 @@ if argc <= 1:
     debug("  - <optional argument> defaults to main")
     debug("")
 
-idx = 1
-while idx < argc:
-    arg = argv[idx].lower()
-    match arg:
-        case "-o":
-            idx+=1
-            OUTFILE_PATH = argv[idx].removesuffix(".ll")+".ll"
-        case _:
-            if arg[0] != "-":
-                INFILE_PATH = argv[idx].removesuffix(".sw")+".sw"
-    idx+=1
+
+OUTFILE_PATH = args.o.removesuffix(".ll")+".ll"
+INFILE_PATH = args.sourcecode.removesuffix(".sw")+".sw"
 
 @dataclass
 class kind:
@@ -1472,4 +1480,4 @@ compile_nodes(nodes)
 
 out.close()
 
-os.system(f"clang {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module -target x86_64-w64-mingw32")
+os.system(f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.cflags}")
