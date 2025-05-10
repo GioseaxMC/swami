@@ -766,9 +766,9 @@ def parse_inclusion() -> list[Node]:
     
     filepath_rel = Path(filepath_tk[-1][1:-1])
     if is_local:
-        filepath = cwd.joinpath(filepath_rel)
+        filepath = cwd.joinpath(filepath_rel).__str__()
     else:
-        filepath = libs.joinpath(filepath_rel)
+        filepath = libs.joinpath(filepath_rel).__str__()
     
     og_tokens = tokens
     try:

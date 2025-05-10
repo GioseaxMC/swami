@@ -27,12 +27,11 @@ ptr void nullptr = 0
 
 int sizeof_string = 24
 
-ptr void str_null = 0
+ptr void NULL = 0
 
 func int write_file(ptr char filename, ptr char contents) {
     ptr void file = fopen(filename, "wb");
     if (!(file == nullptr)) {
-        printf("Error opening file\n");
         fclose(file); 
         return -1;
     };
@@ -41,9 +40,8 @@ func int write_file(ptr char filename, ptr char contents) {
     int written = fwrite(contents, 1, len, file);
     
     if (!(written == len)) {
-        printf("Error writing to file");
         fclose(file);
-        return -1;
+        return -2;
     };
     
     fclose(file);
@@ -206,7 +204,7 @@ func void str_replace(ptr string _str, ptr char _old, ptr char _new) {
     int new_len = strlen(_new);
     ptr char result;
     int offset = 0;
-    while !((result = strstr(addptr(str.data, offset), _old)) == str_null) {
+    while !((result = strstr(addptr(str.data, offset), _old)) == NULL) {
         int _pos = cast result as int - cast str.data as int;
         str_remove(&str, _pos, old_len);
         int middle = cast result as int + new_len - cast str.data as int;
@@ -253,8 +251,6 @@ func string_vec str_split(string _str, char c) {
     };
     return vtemp;
 }
-
-ptr void NULL = 0
 
 func ptr char str_fmt(ptr char fmt, <>) {
     ptr void args;
