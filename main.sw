@@ -1,7 +1,7 @@
-include { "examples/stdlib.sw" }
+include { "stdlib.sw" }
 
 func int main() {
-    str_make(str, "Hello World!\n");
+    str_make(str, "Hello Better World!\n");
     printf( c(str) );
 
     return 0;

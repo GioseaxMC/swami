@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from sys import *
 from colorama import Fore as f
@@ -6,6 +7,9 @@ from pprint import pp
 argc = len(argv)
 
 import argparse
+
+cwd = Path(os.getcwd())
+libs = Path(os.path.realpath(__file__)).parent / "libs"
 
 parser = argparse.ArgumentParser(description="Swami compiler:\n\tusage: <python> swami.py main.sw -o main")
 
@@ -16,7 +20,7 @@ parser.add_argument('sourcecode', help="The swami file")
 
 parser.add_argument('-o', help="The output file for both the .ll file and the executable", required=1)
 
-parser.add_argument('--cflags', help="Custom flags directly passed to the llvm compiler", default="")
+parser.add_argument('--bflags', help="Custom flags directly passed to the backend", default="")
 
 args = parser.parse_args()
 
@@ -748,15 +752,23 @@ def parse_inclusion() -> list[Node]:
     global tokens, parse_indentation
     nodes = []
     opener = tokens.consume()
+
+    is_local = 1
     if opener[-1] not in ("{","("):
         parser_error(opener, "wrong include opener, must use:\n\t- '(' for local files\n\t- '{' for compiler directory files")
+    elif opener[-1] == "{":
+        is_local = 0
     
     filepath_tk = tokens.consume()
 
     if not represents_string(filepath_tk[-1]):
         parser_error(filepath_tk, "the file name has to be a string")
     
-    filepath = filepath_tk[-1][1:-1]
+    filepath_rel = Path(filepath_tk[-1][1:-1])
+    if is_local:
+        filepath = cwd.joinpath(filepath_rel)
+    else:
+        filepath = libs.joinpath(filepath_rel)
     
     og_tokens = tokens
     try:
@@ -1480,4 +1492,4 @@ compile_nodes(nodes)
 
 out.close()
 
-os.system(f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.cflags}")
+os.system(f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.bflags}")
