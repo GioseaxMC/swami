@@ -282,6 +282,9 @@ class kind:
     
     MACRODECL = iota()
     CAST = iota()
+    SIZEOF = iota()
+
+    REFPTR = iota()
 
     NULL = iota()
 
@@ -316,6 +319,9 @@ human_kind = [
     
     "macro declaration",
     "cast",
+    "sizeof",
+
+    "reference pointer",
 
     "null",
 ]
@@ -428,6 +434,8 @@ def get_importance(token):
         case "<=": return 8
         case ">=": return 8
         case "==": return 8
+        case "!=": return 8
+
         
         case "[": return 9
 
@@ -581,9 +589,9 @@ def parse_macro_args():
         token = tokens.consume()
         tkname = token[-1]
         debug("[MACROARG]: parsing", tkname, "with indentation", m_level)
-        if tkname == "(":
+        if tkname in ("(", "{"): # check for macro related bugs
             m_level+=1
-        if tkname == ")":
+        if tkname in (")", "}"):
             if m_level:
                 m_level-=1
                 body_tokens.append(token)
@@ -708,6 +716,8 @@ def parse_unnamed_args(closer):
 def parse_extern(node):
     node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
+    if node.tkname() in declared_funcs:
+        node.kind = kind.NULL
     debug("[EXTERN]: name:", node.tkname(), rlt(node.type, node.ptrl))
     declared_funcs[node.tkname()] = node
     tokens.expect("(")
@@ -721,6 +731,8 @@ def parse_struct(node):
     llvm_type.append(f"%struct.{node.tkname()}")
     tokens.expect("{")
     node.children = parse_named_args("}")
+    node.ptrl = 0
+    node.type = len(llvm_type)-1
     declared_structs[node.tkname()] = node
 
 def parse_vardecl(node):
@@ -839,6 +851,12 @@ def parse_primary():
         node.type = node.block.type
         node.ptrl = node.block.ptrl
 
+    elif token[-1] == "*":
+        node.kind = kind.REFPTR
+        node.block = parse_primary()
+        node.type = node.block.type
+        node.ptrl = node.block.ptrl
+
     elif token[-1] == "func":
         # assume_global(token)
         node.kind = kind.FUNCDECL
@@ -849,6 +867,12 @@ def parse_primary():
         node.kind = kind.EXTERN
         parse_extern(node)
     
+    elif token[-1] == "sizeof":
+        node.kind = kind.SIZEOF
+        tokens.expect("(")
+        node.block = parse_expression(0)
+        tokens.expect(")")
+
     elif token[-1] == "struct":
         # assume_global(token)
         node.kind = kind.STRUCT
@@ -1078,6 +1102,15 @@ def compile_node(node, level, assignable = 0):
                     break
             return ret
 
+        case kind.SIZEOF:
+            compile_node(node.block, level)
+            node.type, node.ptrl = node.block.type, node.block.ptrl
+            out_writeln(f"%{iota()} = getelementptr {rlt(node.type, node.ptrl)}, {rlt(node.type, node.ptrl+1)} null, i32 1", level)
+            out_writeln(f"%{iota()} = ptrtoint {rlt(node.type, node.ptrl+1)} %{iota(-1)-1} to i64", level)
+            node.type = sw_type.INT
+            node.ptrl = 0
+            return f"%{iota(-1)}"
+
         case kind.STR_LIT:
             node.type = sw_type.CHAR
             node.ptrl = 1
@@ -1199,18 +1232,8 @@ def compile_node(node, level, assignable = 0):
                 return src
             
             elif node.tkname() == "[":
-                # if dest_node.kind == kind.EXPRESSION:
-                #     for arg in node.children:
-                #         arg_names.append(compile_node(arg, level))
-                #     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr {arg_names[0]}", level)
-                #     out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i64 {arg_names[1]}", level)
-                # else:
-                #     src = compile_node(node.children[1], level)
-                #     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr %{dest_node.tkname()}", level)
-                #     out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl)}, ptr %{iota(-1)-1}, i64 {src}", level)
                 dest = compile_node(node.children[0], level) # assignable
                 src = compile_node(node.children[1], level)
-                # out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl)}, ptr {dest}", level)
                 out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl-1)}, ptr {dest}, i64 {src}", level)
                 if not assignable:
                     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl-1)}, ptr %{iota(-1)-1}", level)
@@ -1351,6 +1374,18 @@ def compile_node(node, level, assignable = 0):
             node.ptrl += 1
             return f"{name}"
 
+        case kind.REFPTR:
+            dest = compile_node(node.block, level)
+            if not node.block.ptrl:
+                compiler_error(node, "Only pointers can be dereferenced")
+            out_writeln(f"%{iota()} = getelementptr {rlt(node.block.type, node.block.ptrl-1)}, ptr {dest}, i64 0", level)
+            if not assignable:
+                out_writeln(f"%{iota()} = load {rlt(node.block.type, node.block.ptrl-1)}, ptr %{iota(-1)-1}", level)
+                node.type, node.ptrl = node.block.type, node.block.ptrl-1
+            else:
+                node.type, node.ptrl = node.block.type, node.block.ptrl-1
+            return f"%{iota(-1)}"
+           
         case kind.EXTERN:
             out_write(f"declare {rlt(node.type, node.ptrl)} @{node.tkname()}(", level)
             for idx, arg in enumerate(node.children):
@@ -1382,7 +1417,7 @@ def compile_node(node, level, assignable = 0):
                     if arg.type == -1:
                         arg.type, arg.ptrl = funcinfo.children[idx].type, funcinfo.children[idx].ptrl
 
-                    elif not type_cmp(arg.type, arg.ptrl, funcinfo.children[idx].type, funcinfo.children[idx].ptrl):
+                    elif idx < len(funcinfo.children) and not type_cmp(arg.type, arg.ptrl, funcinfo.children[idx].type, funcinfo.children[idx].ptrl):
                         compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx].type, funcinfo.children[idx].ptrl)} != {hlt(arg.type, arg.ptrl)}")
             
             if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
@@ -1469,6 +1504,9 @@ def compile_node(node, level, assignable = 0):
             if DEBUGGING:
                 out_writeln("; '{node.tkname()}' macro declared here", level)
 
+        # case kind.NULL: # null nodes should not make it to the compilation stage
+        #     ...
+
         case _:
             compiler_error(node, "Unexpected unqualified token '&t' cannot be compiled")
     return f"%{iota(-1)}"
@@ -1491,5 +1529,7 @@ for node in nodes:
 compile_nodes(nodes)
 
 out.close()
+
+debug(declared_structs, "\n", human_type, "\n", [(x.type, x.ptrl) for key, x in declared_structs.items()])
 
 os.system(f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.bflags}")

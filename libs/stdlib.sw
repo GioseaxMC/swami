@@ -23,6 +23,11 @@ extern int vsnprintf(ptr void, ptr char, ptr char, ptr void)
 
 extern void printf(ptr char, <>)
 
+macro for(decl, cond, inc, body) {{
+    decl;
+    while (cond) {body; inc; };
+};}
+
 ptr void nullptr = 0
 
 int sizeof_string = 24
