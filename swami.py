@@ -176,7 +176,8 @@ def find_next(line: str) -> int:
                 if c == "\"":
                     if to_search[j-1] != "\\":
                         return max(1, j+2)
-
+        if c == '#':
+            return -2
         if c in human_operands and (idx == 0 or line[idx-1] == " "):
             # debug(f"CHECKING LINE: '{line[idx:idx+2]}'")
             if line[idx:idx+2] in human_operands:
@@ -185,6 +186,21 @@ def find_next(line: str) -> int:
         if not uisalnum(c):
             return max(1, idx)
     return -1
+
+def lex_tokens(line: str):
+    og_len = len(line)
+    while len(line) and not line.isspace():
+        sline = line.lstrip()
+        col = og_len - len(sline)
+        x = find_next(sline)
+        if x == -2:
+            break
+        if x > 0:
+            yield col, sline[:x]
+            line = sline[x:]
+        else:
+            yield col, sline
+            line = ""
 
 def llvm_len(s: str) -> int:
     length = 0
@@ -196,19 +212,6 @@ def llvm_len(s: str) -> int:
             i += 1
         length += 1
     return length
-
-def lex_tokens(line: str):
-    og_len = len(line)
-    while len(line) and not line.isspace():
-        sline = line.lstrip()
-        col = og_len - len(sline)
-        x = find_next(sline)
-        if x > 0:
-            yield col, sline[:x]
-            line = sline[x:]
-        else:
-            yield col, sline
-            line = ""
 
 def lex_lines(file_contents, file_path):
     for row, line in enumerate(file_contents.split("\n")):
@@ -285,6 +288,7 @@ class kind:
     SIZEOF = iota()
 
     REFPTR = iota()
+    TYPE = iota()
 
     NULL = iota()
 
@@ -736,7 +740,6 @@ def parse_struct(node):
     declared_structs[node.tkname()] = node
 
 def parse_vardecl(node):
-    node.type, node.ptrl = parse_type(0)
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid variable name")
@@ -934,8 +937,12 @@ def parse_primary():
 
     elif token[-1] in human_type:
         node.kind = kind.VARDECL
-        tokens.goback()
-        parse_vardecl(node)
+        tokens.goback() # no one will see this...
+        node.type, node.ptrl = parse_type(0)
+        if uisalnum(tokens.current()[-1]):
+            parse_vardecl(node)
+        else:
+            node.kind = kind.TYPE
 
     elif token[-1] in current_namespace or token[-1] in global_vars:
         node.kind = kind.VARREF
@@ -956,7 +963,7 @@ def parse_primary():
             node.block = parse_incdec()
         else:
             parser_error(token, "Unknown instruction '&t'")
-            
+
     else:
         parser_error(token, "Unexpected symbol '&t'")
 
@@ -1120,7 +1127,10 @@ def compile_node(node, level, assignable = 0):
             node.type = sw_type.INT
             node.ptrl = 0
             return f"{node.tkname()}"
-                
+        
+        case kind.TYPE:
+            ...
+
         case kind.UNARY:
             result = compile_node(node.block, level)
             if node.tkname() == "-":
@@ -1216,13 +1226,13 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             if node.tkname() == "=":
-                dest = f"{compile_node(dest_node, level, 1)}"
+                dest = compile_node(dest_node, level, 1)
                 debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
                 src = compile_node(src_node, level)
                 if src_node.ptrl and dest_node.ptrl and dest_node.type == sw_type.CHAR:
                     out_writeln(f"store ptr {src}, ptr {dest}", level)
                 elif src_node.kind == kind.NUM_LIT:
-                    out_writeln(f"store {rlt(dest_node.type, 0)} {src}, ptr {dest}", level)
+                    out_writeln(f"store {rlt(dest_node.type, dest_node.ptrl)} {src}, ptr {dest}", level)
                 elif not type_cmp(src_node.type, src_node.ptrl, dest_node.type, dest_node.ptrl):
                     compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.type, dest_node.ptrl)}' != '{hlt(src_node.type, src_node.ptrl)}'")
                 else:

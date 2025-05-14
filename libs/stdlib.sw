@@ -17,11 +17,14 @@ extern void exit(int)
 extern int strlen(ptr char)
 extern void strcpy(ptr char, ptr char)
 extern ptr char strstr(ptr char, ptr char)
+extern int strcmp(ptr char, ptr char)
 extern void va_start(ptr void)
 extern void va_end(ptr void)
 extern int vsnprintf(ptr void, ptr char, ptr char, ptr void)
 
 extern void printf(ptr char, <>)
+
+macro streq(sstr, ssstr) { strcmp(sstr, ssstr) == 0; }
 
 macro for(decl, cond, inc, body) {{
     decl;
