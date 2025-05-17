@@ -9,6 +9,8 @@ dynamic_array(ptr char, ArgDescs)
 dynamic_array(ptr void, ArgPoint)
 dynamic_array(int,      ArgTypes)
 
+dynamic_array(ptr char, PosArgs)
+
 dynamic_array(ptr char, ParserArgs)
 
 int StrArg = 0
@@ -20,14 +22,19 @@ struct Parser {
     ArgPoint pointers,
     ArgTypes types,
     ArgDescs descs,
+    
+    PosArgs  positionals,
+    ptr char desc,
 }
 
-func Parser make_parser() {
+func Parser make_parser(ptr char desc) {
     Parser parser;
     da_init(parser.names);
     da_init(parser.pointers);
     da_init(parser.types);
     da_init(parser.descs);
+    da_init(parser.positionals);
+    parser.desc = desc;
     return parser;
 }
 
@@ -47,12 +54,47 @@ func ptr void add_arg(ptr Parser _parser, ptr char arg_name, ptr char desc, int 
     return pointer;
 }
 
+func void parser_show_help(ptr Parser parser, ptr ParserArgs argv) {
+    int arg_idx = 0;
+    printf("%s\n\nUsage: %s\n", *parser.desc, *argv.items[0]);
+
+    printf("  Arguments:\n");
+    int atype;
+    foreach(*parser.names, ptr char, arg, {
+        atype = *parser.types.items[arg_idx];
+        if (atype != BoolArg) {
+        
+            printf("    %s ", *arg);
+
+            if (atype == StrArg) { printf("<string> : "); } else { printf("<number> : "); };
+
+            printf("%s\n", *parser.descs.items[arg_idx]);
+
+        };
+        arg_idx++;
+    });
+    
+    printf("\n  Options:\n");
+    arg_idx = 0;
+    foreach(*parser.names, ptr char, arg, {
+        atype = *parser.types.items[arg_idx];
+        if (atype == BoolArg) {
+            printf("    %s : %s\n", *arg, *parser.descs.items[arg_idx]);
+        };
+        arg_idx++;
+    });
+
+    return;
+}
+
 func void parse_args(ptr Parser _parser, ptr ParserArgs argv) {
     int is_flag;
     int flag_pos;
     foreach(*argv, ptr char, arg, {
         is_flag  = 0;
         flag_pos = 0;
+
+        if (streq(*arg, "-h") || streq(*arg, "--help")) { parser_show_help(_parser, argv); exit(0); };
         foreach(*_parser.names, ptr char, name, {
             if (streq(*name, *arg)) {
                 is_flag = 1;
@@ -75,43 +117,11 @@ func void parse_args(ptr Parser _parser, ptr ParserArgs argv) {
             } else if (*_parser.types.items[flag_pos] == BoolArg) {
                 *cast (*_parser.pointers.items[flag_pos]) as ptr int = 1;
             };
+        } else {
+            da_append(*_parser.positionals, *arg);
         };
         
     });
 
     return;
-}
-
-
-
-func int main(int argc, ptr ptr char _argv) {
-    
-    # initialize the parser
-    Parser parser = make_parser();
-    
-
-    # add the flags
-    ptr int n = add_arg(&parser, "-n", "Its a number", IntArg);
-    *n = 0;
-
-    ptr ptr char p = add_arg(&parser, "-p", "It's a word", StrArg);
-    *p = "(null)";
-
-    ptr ptr int debug = add_arg(&parser, "-d", "Do debugging", BoolArg);
-    
-
-    # prepare argv into a dynamic array
-    ParserArgs argv;
-    da_from_ptr(argv, _argv, argc);
-    
-
-    # parse the arguments
-    parse_args(&parser, &argv);
-    
-
-    printf("N: %i\n", *n + 10);
-    printf("P: %s\n", *p);
-    printf("D: %i\n", *debug);
-    
-    return 0;
 }

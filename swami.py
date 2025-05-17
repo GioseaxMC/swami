@@ -1,3 +1,5 @@
+# TODO: implement token level parentesis stack check
+
 import os
 from pathlib import Path
 from dataclasses import dataclass
@@ -80,7 +82,7 @@ def hlt(type: int, ptr_level: int):
     return ("ptr "*ptr_level) + human_type[type]
 
 def parser_error(token, prompt, errno = -1):
-    print(get_tk_pos(token)+":", "ERROR:", prompt.replace("&t", token[-1]))
+    print(get_tk_pos(token)+":", "ERROR:" if errno else "WARNING:", prompt.replace("&t", token[-1]))
     with open(token[0], "r") as fp:
         content = fp.read()
         print("\n  "+content.split("\n")[token[1]])
@@ -218,6 +220,23 @@ def lex_lines(file_contents, file_path):
         for col, word in lex_tokens(line):
             yield file_path, row, col, word
 
+pr_cmp = {
+    "(":")",
+    "[":"]",
+    "{":"}", }
+def get_purified_tokens(file_contents, file_path):
+    p_tokens = list(lex_lines(file_contents, file_path))
+    pr_stack = []
+    for tk in p_tokens:
+        if tk[-1] in ("{", "[", "("):
+            pr_stack.append(tk)
+        elif tk[-1] in ("}", "]", ")"):
+            if pr_cmp[pr_stack[-1][-1]] != tk[-1]:
+                parser_error(pr_stack[-1], "Invalid parentesis pairing starting from here")
+            else:
+                pr_stack.pop()
+    return p_tokens
+
 class Node:
     def __init__(self):
         self.token = None
@@ -349,10 +368,12 @@ def add_usr_var(node):
     else:
         debug("[USINGNAMESPACE]: global_vars")
         namespace = global_vars
+    exists = 0
     if node.tkname() in namespace:
-        parser_error(node.token, "Redeclaration of variable '&t'")
+        exists = 1
     namespace[node.tkname()] = node
     all_declared_vars.append(node.tkname())
+    return exists
 
 class Manager:
     def __init__(self, items):
@@ -417,8 +438,9 @@ try:
         source_codents = fp.read()
 except:
     print("ERROR: failed to open input file:", INFILE_PATH)
+    exit(-1)
 
-parsed_tokens = list(lex_lines(source_codents, INFILE_PATH))
+parsed_tokens = get_purified_tokens(source_codents, INFILE_PATH)
 debug("[PARSEDTKS]:", [tk[-1] for tk in parsed_tokens])
 tokens = Manager(parsed_tokens)
 
@@ -743,11 +765,22 @@ def parse_vardecl(node):
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid variable name")
-    add_usr_var(node)
+    exists = add_usr_var(node)
+    if exists:
+        node.kind = kind.VARREF
     debug("[VARDECL]:", node.tkname())
     if tokens.current()[-1] == "=":
-        tokens.consume()
-        node.block = parse_expression(0)
+        if not exists:
+            tokens.consume()
+            node.block = parse_expression(0)
+        else:
+            op_node = Node()
+            op_node.token = tokens.consume()
+            op_node.kind = kind.OPERAND
+            op_node.children.append(node)
+            op_node.children.append(parse_expression(0))
+            node = op_node
+    return node
     # tokens.expect(";")
 
 def parse_varref(node):
@@ -763,9 +796,9 @@ def parse_varref(node):
     node.type, node.ptrl = var_info.type, var_info.ptrl
     node.block = parse_incdec()
 
-def parse_inclusion() -> list[Node]:
+included_files = []
+def parse_inclusion(node) -> list[Node]:
     global tokens, parse_indentation
-    nodes = []
     opener = tokens.consume()
 
     is_local = 1
@@ -785,35 +818,39 @@ def parse_inclusion() -> list[Node]:
     else:
         filepath = libs.joinpath(filepath_rel).__str__()
     
-    og_tokens = tokens
-    try:
-        with open(filepath, "r") as fp:
-            contents = fp.read()
-    except Exception as e:
-        parser_error(filepath_tk, f"failed to open file &t while trying to include - {e}")
+    if filepath in included_files:
+        parser_error(filepath_tk, "double inclusion, non stopping error, the first inclusion is the only one used", 0)
+        node.kind = kind.NULL
+    else:
+        included_files.append(filepath)
+        og_tokens = tokens
+        try:
+            with open(filepath, "r") as fp:
+                contents = fp.read()
+        except Exception as e:
+            parser_error(filepath_tk, f"failed to open file &t while trying to include - {e}")
+        
+        debug("READING SRCODE from:", contents)
+
+        parsed_tokens = get_purified_tokens(contents, filepath)
+        debug("[PARSEDTKS]:", [tk[-1] for tk in parsed_tokens])
+        
+        tokens = Manager(parsed_tokens)
+        og_pi = parse_indentation
+        parse_indentation = 0
+
+        while tokens.more():
+            if (pnode:=parse_primary()).kind != kind.NULL:
+                node.children.append(pnode)
+
+        parse_indentation = og_pi
+        tokens = og_tokens
     
-    debug("READING SRCODE from:", contents)
-
-    parsed_tokens = list(lex_lines(contents, filepath))
-    debug("[PARSEDTKS]:", [tk[-1] for tk in parsed_tokens])
-    
-    tokens = Manager(parsed_tokens)
-    og_pi = parse_indentation
-    parse_indentation = 0
-
-    while tokens.more():
-        if (node:=parse_primary()).kind != kind.NULL:
-            nodes.append(node)
-
-    parse_indentation = og_pi
-    tokens = og_tokens
-
     if opener[-1] == "(":
         tokens.expect(")")
     else:
         tokens.expect("}")
-
-    return nodes
+    return node
     
 
 def parse_primary():
@@ -924,7 +961,7 @@ def parse_primary():
         
     elif token[-1] == "include":
         node.kind = kind.BLOCK
-        node.children = parse_inclusion()
+        node = parse_inclusion(node)
 
     elif token[-1] == "cast":
         node.kind = kind.CAST
@@ -940,7 +977,7 @@ def parse_primary():
         tokens.goback() # no one will see this...
         node.type, node.ptrl = parse_type(0)
         if uisalnum(tokens.current()[-1]):
-            parse_vardecl(node)
+            node = parse_vardecl(node)
         else:
             node.kind = kind.TYPE
 
@@ -960,6 +997,8 @@ def parse_primary():
     elif tokenizable(token[-1]):
         if parse_indentation:
             node.kind = kind.WORD
+            if tokens.current()[-1] == "(":
+                parser_error(token, "Undeclared macro or function cannot be called")
             node.block = parse_incdec()
         else:
             parser_error(token, "Unknown instruction '&t'")
@@ -1136,6 +1175,7 @@ def compile_node(node, level, assignable = 0):
             if node.tkname() == "-":
                 node.type, node.ptrl = node.block.type, node.block.ptrl
                 if node.block.kind == kind.NUM_LIT:
+                    node.kind = kind.NUM_LIT
                     result = "-"+result
                     return result
                 else:
@@ -1174,10 +1214,7 @@ def compile_node(node, level, assignable = 0):
                         out_writeln(f"store {rlt(node.type, node.ptrl)} {to_assign}, ptr %{node.tkname()}", level)
                     # out_writeln(f"store {rlt(node.type, node.ptrl)} {to_assign}, ptr %{node.tkname()}", level)
             else:
-                if node.block.kind == kind.NUM_LIT:
-                    argn = compile_node(node.block, level)
-                if node.block.kind == kind.VARDECL:
-                    argn = compile_node(node.block, level) #TODO: make variables static so you can do static assignments
+                argn = compile_node(node.block, level)
                 if node.ptrl:
                     out_writeln(f"@{node.tkname()} = global {rlt(node.type, node.ptrl)} null", level)
                 else:
@@ -1242,8 +1279,10 @@ def compile_node(node, level, assignable = 0):
                 return src
             
             elif node.tkname() == "[":
-                dest = compile_node(node.children[0], level) # assignable
-                src = compile_node(node.children[1], level)
+                dest = compile_node(dest_node, level) # assignable
+                src = compile_node(src_node, level)
+                if not dest_node.ptrl:
+                    compiler_error(dest_node, "Can only index into pointers")
                 out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.type, dest_node.ptrl-1)}, ptr {dest}, i64 {src}", level)
                 if not assignable:
                     out_writeln(f"%{iota()} = load {rlt(dest_node.type, dest_node.ptrl-1)}, ptr %{iota(-1)-1}", level)
@@ -1543,3 +1582,5 @@ out.close()
 debug(declared_structs, "\n", human_type, "\n", [(x.type, x.ptrl) for key, x in declared_structs.items()])
 
 os.system(f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.bflags}")
+if DEBUGGING:
+    os.system(f"del {OUTFILE_PATH}")

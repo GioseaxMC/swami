@@ -38,14 +38,13 @@ macro da_begin(da) { (da).items; }
 
 macro da_end(da) { cast cast (da).items as int + sizeof(*((da).items))*(da).length as ptr void; }
 
-macro foreach(da, iter_t, iter_n, body) {
-    for(
-        ptr iter_t iter_n = da_begin(da),
-        cast iter_n as int != cast da_end(da) as int,
-        iter_n = cast cast iter_n as int + sizeof(*((da).items)) as ptr void,
-            body
-    );
-}
+macro foreach(da, iter_t, iter_n, body) {{
+    ptr iter_t iter_n = da_begin(da);
+    while( cast iter_n as int != cast da_end(da) as int ) {
+        body;
+        iter_n = cast cast iter_n as int + sizeof(*((da).items)) as ptr void;
+    };
+};}
 
 macro dynamic_array(type, name) {
     struct name {
