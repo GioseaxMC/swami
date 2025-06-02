@@ -76,6 +76,7 @@ def loud_call(func):
 @dataclass
 class kind:
     FUNC_CALL = iota(1)
+    FUNC_REF = iota()
     FUNC_DECL = iota()
     STR_LITER = iota()
     BLOCK = iota()

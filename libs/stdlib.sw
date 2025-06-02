@@ -2,7 +2,6 @@ extern ptr void malloc(int)
 
 extern ptr void realloc(ptr void, int)
 
-
 extern void free(ptr void)
 extern void exit(int)
 
@@ -25,20 +24,18 @@ macro for(decl, cond, inc, body) {{
 
 ptr void nullptr = 0
 
-int sizeof_string = 24
-
 ptr void NULL = 0
 
 extern ptr void memcpy(ptr void, ptr void, int)
 
-struct string {
-    ptr char data,
+struct String {
+    ptr char items,
     int capacity,
     int length,
 }
 
-struct string_vec {
-    ptr string items,
+struct String_vec {
+    ptr String items,
     int length,
     int capacity,
 }
@@ -64,76 +61,103 @@ func int next_powt(int len) {
     return temp;
 }
 
-func string str_init() {
-    string made;
+func String str_init() {
+    String made;
 	made.length = 0;
 	made.capacity = 0;
-	made.data = malloc(0);
+	made.items = malloc(0);
 	return made;
 }
 
-macro str_make(str_name, str_contents) {
-    {
-        string str_name = str_init();
-        str_set(&str_name, str_contents);
-    };
-}
+macro c(str_name) { (str_name).items; }
 
-macro c(str_name) { str_name.data; }
-
-func void str_set(ptr string _str, ptr char other) {
-	string str = *_str;
+func void str_set(ptr String _str, ptr char other) {
+	String str = *_str;
     int other_length = strlen(other);
 	str.capacity = next_powt(other_length);
-	ptr char old_data = str.data;
-	str.data = malloc(str.capacity);
-    strcpy(str.data, other);
+	ptr char old_items = str.items;
+	str.items = malloc(str.capacity);
+    strcpy(str.items, other);
     str.length = other_length;
-    if (old_data) free(old_data);
+    if (old_items) free(old_items);
     *_str = str;
     return;
 }
 
-func void str_insert(ptr string _str, int _pos, ptr char _new) {
-    string str = *_str;
-    ptr char old_data = str.data;
+macro str_make(str_name, str_contents) {
+    {
+        String str_name = str_init();
+        str_set(&str_name, str_contents);
+    };
+}
+
+func String SS(ptr char string) {
+    str_make(__str__, string);
+    return __str__;
+}
+
+func void str_insert(ptr String _str, int _pos, ptr char _new) {
+    String str = *_str;
+    ptr char old_items = str.items;
     int new_len = strlen(_new);
     str.capacity = next_powt(str.length + strlen(_new));
-    str.data = malloc(str.capacity);
+    str.items = malloc(str.capacity);
     int inserted = 0;
     int idx = 0;
     while (str.length+1 > idx) {
         if (idx == _pos) {
             while (new_len > inserted) {
-                str.data[idx+inserted] = _new[inserted];
+                str.items[idx+inserted] = _new[inserted];
                 inserted++;
             };
         };
-        str.data[idx+inserted] = old_data[idx];
+        str.items[idx+inserted] = old_items[idx];
         idx++;
     };
     str.length = str.length + new_len;
-    str.data[str.length] = 0;
-    if (old_data) free(old_data);
+    str.items[str.length] = 0;
+    if (old_items) free(old_items);
     *_str = str;
     return;
 }
 
-func void str_add(ptr string _str, ptr char _new) {
-    string str = *_str;
-    str_insert(&str, str.length, _new);
+func void str_insert_char(ptr String _str, int _pos, char _new) {
+    String str = *_str;
+    ptr char old_items = str.items;
+    int new_len = 1;
+    str.capacity = next_powt(str.length + 1);
+    str.items = malloc(str.capacity);
+    int idx = 0;
+    while (str.length+1 > idx) {
+        if (idx == _pos) {
+            str.items[idx] = _new;
+        };
+        str.items[idx+1] = old_items[idx];
+        idx++;
+    };
+    str.length = str.length + new_len;
+    str.items[str.length] = 0;
+    if (old_items) free(old_items);
     *_str = str;
     return;
 }
 
-func void str_remove(ptr string _str, int _pos, int _len) {
-    string str = *_str;
+func void str_add(ptr String str, ptr char _new) {
+    str_insert(str, str.length, _new); return;
+}
+
+func void str_add_char(ptr String str, char _new) {
+    str_insert_char(str, str.length, _new); return;
+}
+
+func void str_remove(ptr String _str, int _pos, int _len) {
+    String str = *_str;
     str_assert((_len > 0), "length of remover must be more than 0");
     str_assert((_len+_pos <= str.length), "removing out of range");
     int idx = 0;
     while (str.length-_pos-_len+1 > idx) {
         if (_pos+idx+_len <= str.length) {
-            str.data[_pos+idx] = str.data[_pos+idx+_len];
+            str.items[_pos+idx] = str.items[_pos+idx+_len];
         };
         idx++;
     };
@@ -142,27 +166,29 @@ func void str_remove(ptr string _str, int _pos, int _len) {
     return;
 }
 
-func void str_clear(ptr string _str) {
-    string str = *_str;
+func void str_free(ptr String _str) {
+    String str = *_str;
     str.length = 0;
     str.capacity = 1;
-    free(str.data);
-    str.data = malloc(1);
-    str.data[0] = 0;
+    free(str.items);
+    str.items = malloc(1);
+    str.items[0] = 0;
     *_str = str;
     return;
 }
 
-func void str_replace(ptr string _str, ptr char _old, ptr char _new) {
-    string str = *_str;
+func void str_clear(ptr String _str) { _str.length = 0; return; }
+
+func void str_replace(ptr String _str, ptr char _old, ptr char _new) {
+    String str = *_str;
     int old_len = strlen(_old);
     int new_len = strlen(_new);
     ptr char result;
     int offset = 0;
-    while !((result = strstr(addptr(str.data, offset), _old)) == NULL) {
-        int _pos = cast result as int - cast str.data as int;
+    while !((result = strstr(addptr(str.items, offset), _old)) == NULL) {
+        int _pos = cast result as int - cast str.items as int;
         str_remove(&str, _pos, old_len);
-        int middle = cast result as int + new_len - cast str.data as int;
+        int middle = cast result as int + new_len - cast str.items as int;
         offset = middle;
         str_insert(&str, _pos, _new);
     };
@@ -170,23 +196,23 @@ func void str_replace(ptr string _str, ptr char _old, ptr char _new) {
     return;
 }
 
-func string_vec ptr_vec_init() {
-    string_vec made;
+func String_vec str_vec_init() {
+    String_vec made;
     made.length = 0;
     made.items = malloc(0);
     made.capacity = 0;
     return made;
 }
 
-func void ptr_vec_append(ptr string_vec _vec, string _str) {
-    string_vec vec = *_vec;
+func void str_vec_append(ptr String_vec _vec, String _str) {
+    String_vec vec = *_vec;
     if (vec.capacity <= (vec.length+1)) {
         vec.capacity = vec.capacity * 2;
         if !(vec.capacity) {
             vec.capacity = 1;
         };
-        ptr string new_data = malloc(sizeof_string+1);
-        memcpy(new_data, vec.items, vec.capacity);
+        ptr String new_items = malloc(sizeof(String)+1);
+        memcpy(new_items, vec.items, vec.capacity);
         free(vec.items);
     };
     vec.length++;
@@ -195,19 +221,23 @@ func void ptr_vec_append(ptr string_vec _vec, string _str) {
     return;
 }
 
-func string_vec str_split(string _str, char c) {
+func String_vec str_split(ptr String _str, char c) {
     int idx = 0;
-    string_vec vtemp = ptr_vec_init();
-    string temp = str_init();
-    while (idx < (_str.length)) {
-        if (cast _str.data as char == c) {
-            0;
+    String_vec vtemp = str_vec_init();
+    String temp = str_init();
+    for (int idx=0, idx < (*_str.length), idx++, {
+        if (_str.items[idx] == c) {
+            str_vec_append(&vtemp, temp);
+            str_clear(&temp);
+        } else {
+            str_add_char(&temp, *_str.items[idx]);
         };
-    };
+    });
+    str_vec_append(&vtemp, temp);
     return vtemp;
 }
 
-func ptr char str_fmt(ptr char fmt, <>) {
+func ptr char cstr_fmt(ptr char fmt, <>) {
     ptr void args;
     va_start(&args);
 
@@ -225,4 +255,11 @@ func ptr char str_fmt(ptr char fmt, <>) {
     va_end(args);
 
     return buffer;
+}
+
+func void str_fmt(ptr String fmt, <>) {
+    ptr char to_free = fmt.items;
+    fmt.items = cstr_fmt(fmt.items);
+    free(to_free);
+    return;
 }

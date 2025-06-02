@@ -1,5 +1,7 @@
-include { "stdlib.sw" }
-include { "darrays.sw" }
+include {
+    "stdlib.sw",
+    "darrays.sw",
+}
 
 extern int atoi(ptr char)
 extern int strlen(ptr char)
