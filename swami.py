@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from sys import *
 from colorama import Fore as f
 from pprint import pp
+from copy import copy
 argc = len(argv)
 
 import argparse
@@ -19,7 +20,7 @@ parser.add_argument('-d', action='store_true', help="Enable # debug mode")
 parser.add_argument('sourcecode', help="The swami file")
 
 parser.add_argument('-o', help="The output file for both the .ll file and the executable", required=1)
-parser.add_argument('--emit-llvm', action='store_true', help="Emit the generated llvm ir")
+parser.add_argument('-emit-llvm', action='store_true', help="Emit the generated llvm ir")
 parser.add_argument('-b', help="Custom flags directly passed to the backend", default="")
 
 args = parser.parse_args()
@@ -50,6 +51,7 @@ def debug(*children, **kwchildren) -> None:
 class sw_type:
     PTR  = iota(1)
     INT  = iota()
+    INT32  = iota()
     VOID = iota()
     CHAR = iota()
     BOOL  = iota()
@@ -58,6 +60,7 @@ class sw_type:
 human_type = [
     "ptr",
     "int",
+    "i32",
     "void",
     "char",
     "bool",
@@ -67,6 +70,7 @@ human_type = [
 llvm_type = [
     "ptr",
     "i64",
+    "i32",
     "void",
     "i8",
     "i1",
@@ -74,7 +78,10 @@ llvm_type = [
 ]
 
 def rlt(tn):
-    tpn = f"{llvm_type[tn.type]+"*"*tn.ptrl}"
+    if (tn.ptrl or tn.outptrl) and tn.type==sw_type.VOID:
+        return "ptr"
+    else:
+        tpn = f"{llvm_type[tn.type]+"*"*tn.ptrl}"
     for idx, ntn in enumerate(tn.children):
         if not idx:
             tpn += "("
@@ -100,30 +107,54 @@ def hlt(tn):
     tpn += " ptr"*tn.outptrl
     return tpn
 
+TL = "╭"
+HH = "─"
+TR = "╮"
+VV = "│"
+BR = "╯"
+BL = "╰"
+
+class WindowPrint:
+    def __init__(self, color):
+        self.strings = []
+        self.height = 0
+        self.width = 0
+        self.color = color
+    
+    def print(self, string):
+        strs = string.split("\n")
+        for string in strs:
+            self.strings.append(string)
+            width = len(list(filter(lambda x: 0 < ord(x) and ord(x) < 127, string)))
+            self.width = max(self.width, width)
+            self.height += 1
+    
+    def flush(self):
+        print(self.color+TL + HH*(self.width+2) + TR)
+        for string in self.strings:
+            print(self.color + VV + " " + f.RESET + string, end="")
+            print(" "*(self.width-len(string)) + self.color + " " + VV)
+        print(self.color+BL + HH*(self.width+2) + BR + f.RESET)
+
+
 def parser_error(token, prompt, errno = -1):
-    print(get_tk_pos(token)+":", "ERROR:" if errno else "WARNING:", prompt.replace("&t", token[-1]))
+    COLOR = f.MAGENTA
+    if errno:
+        COLOR = f.RED
+    p = WindowPrint(COLOR)
+    p.print(get_tk_pos(token)+": "+("ERROR" if errno else "WARNING")+": "+prompt.replace("&t", token[-1]))
     with open(token[0], "r") as fp:
         content = fp.read()
-        print("\n  "+content.split("\n")[token[1]])
-        print("  "+" "*token[2]+"^")
-        print("  "+" "*token[2]+"| here")
+        p.print("\n  "+content.split("\n")[token[1]])
+        p.print("  "+" "*token[2]+"^")
+        p.print("  "+" "*token[2]+"| here")
+    p.flush()
     if errno:
-        # if DEBUGGING:
-        #     tokens.pointer -= 1;
-        #     for i in range(10):
-        #         print(tokens.consume())
         exit(errno)
 
 def compiler_error(node, prompt, errno = -1):
     token = node.token
-    print(get_tk_pos(token)+":", "ERROR:", prompt.replace("&t", token[-1]))
-    with open(token[0], "r") as fp:
-        content = fp.read()
-        print("\n  "+content.split("\n")[token[1]])
-        print("  "+" "*token[2]+"^")
-        print("  "+" "*token[2]+"| here")
-    if errno:
-        exit(errno)
+    parser_error(token, prompt, errno)
 
 def get_tk_name(token: tuple[str, int, int, str]):
     return token[-1]
@@ -380,6 +411,8 @@ class kind:
     TYPE = iota()
     FUNCREF = iota()
 
+    LINK = iota()
+
     NULL = iota()
 
 human_kind = [
@@ -419,15 +452,19 @@ human_kind = [
     "type",
     "function reference",
 
+    "linker",
+
     "null",
 ]
 
-declared_funcs: dict[Node] = {}
 func_namespaces: dict[dict[Node]] = {}
 global_vars: dict[Node] = {}
+macro_tokens: dict[list[tuple]] = {}
+
+declared_links: list[str] = []
+declared_funcs: dict[Node] = {}
 declared_strings: list[str] = []
 declared_structs: dict = {}
-macro_tokens: dict[list[tuple]] = {}
 declared_macros: dict[Node] = {}
 
 current_namespace = global_vars
@@ -761,14 +798,17 @@ def parse_macro_call():
             # debug("..", tk)
     
     debug("macro_tokens:", node.tkname())
-    for idx, token in enumerate(current_macro_tks):
-        if token[-1] == "@":
+    idx = 0
+    while idx<len(current_macro_tks):
+        if current_macro_tks[idx][-1] == "@":
             left = current_macro_tks.pop(idx-1)
             current_macro_tks.pop(idx-1)
             right = current_macro_tks.pop(idx-1)
             left = (*left[::-1], left[-1]+right[-1])
             current_macro_tks.insert(idx-1, left)
-        debug(current_macro_tks[idx])
+        else:
+            debug(current_macro_tks[idx])
+            idx+=1
 
     tokens = Manager(current_macro_tks)
 
@@ -931,7 +971,7 @@ def parse_inclusion(node) -> list[Node]:
             filepath = libs.joinpath(filepath_rel).__str__()
         
         if filepath in included_files:
-            parser_error(filepath_tk, "double inclusion, non stopping error, the first inclusion is the only one used", 0)
+            parser_error(filepath_tk, "double inclusion, the first inclusion is the only one used", 0)
         else:
             included_files.append(filepath)
             og_tokens = tokens
@@ -1035,6 +1075,14 @@ def parse_primary():
         else:
             ...
             # debug("[RETURN]: no children")
+
+    elif token[-1] == "link":
+        node.kind = kind.NULL
+        node.val = tokens.consume()[-1]
+        if node.val not in declared_links:
+            declared_links.append(node.val)
+            args.b += f" -l{node.val[1:-1]}"
+        
 
     elif token[-1] == "++":
         node.kind = kind.INC
@@ -1192,13 +1240,20 @@ def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str
         return src, dest_tn.type, dest_tn.ptrl
     if DEBUGGING:
             out_writeln(f"; Casting from {rlt(src_tn)} to {rlt(dest_tn)}", level)
+            
     if bothp:
         out_writeln(f"%{iota()} = bitcast {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
+
     elif isptr:
         if typecmp > 0:
-            out_writeln(f"%{iota()} = ptrtoint {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
+            if dest_tn.type == sw_type.BOOL:
+                out_writeln(f"%{iota()} = ptrtoint {rlt(src_tn)} {src} to i64", level)
+                out_writeln(f"%{iota()} = icmp ne i64 %{iota(-1)-1}, 0", level)
+            else:
+                out_writeln(f"%{iota()} = ptrtoint {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
         else:
             out_writeln(f"%{iota()} = inttoptr {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
+
     else:
         if dest_tn.type == sw_type.BOOL:
             out_writeln(f"%{iota()} = icmp ne {rlt(src_tn)} {src}, 0", level)
@@ -1229,6 +1284,9 @@ def compile_debug(func):
             out_writeln(f"; compiled node with kind: {human_kind[children[0].kind]} :: {rlt(children[0].tn)} :: name {children[0].tkname()}", children[1])
         return ret
     return wrapper
+
+def both_ints(node1, node2):
+    return node1.kind == kind.NUM_LIT and node2.kind == kind.NUM_LIT
 
 @compile_debug
 def compile_node(node, level, assignable = 0):
@@ -1335,12 +1393,17 @@ def compile_node(node, level, assignable = 0):
                     else:
                         out_writeln(f"store {rlt(node.tn)} {to_assign}, ptr %{node.tkname()}", level)
                     # out_writeln(f"store {rlt(node.tn.type, node.tn.ptrl)} {to_assign}, ptr %{node.tkname()}", level)
+                return f"%{node.tkname()}"
             else:
-                argn = compile_node(node.block, level)
-                if node.tn.ptrl:
-                    out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} null", level)
+                if node.block:
+                    argn = compile_node(node.block, level)
+                    if node.tn.ptrl:
+                        out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} null", level)
+                    else:
+                        out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} {argn}", level)
                 else:
-                    out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} {argn}", level)
+                    out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} null", level)
+                return f"@{node.tkname()}"
 
         case kind.VARREF:
             if assignable:
@@ -1351,9 +1414,9 @@ def compile_node(node, level, assignable = 0):
                     return f"%{node.tkname()}"
             else:
                 if node.tkname() in global_vars:
-                    out_writeln(f"%{iota()} = load {rlt(node.tn)}, {rlt(node.tn+1)}  @{node.tkname()}", level)
+                    out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)}  @{node.tkname()}", level)
                 else:
-                    out_writeln(f"%{iota()} = load {rlt(node.tn)}, {rlt(node.tn+1)} %{node.tkname()}", level)
+                    out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)} %{node.tkname()}", level)
 
                 ret_val = f"%{iota(-1)}"
                 
@@ -1512,27 +1575,47 @@ def compile_node(node, level, assignable = 0):
                 if (src_node.tn.type, src_node.tn.ptrl) != (node.tn.type, node.tn.ptrl):
                     if src_node.tn.ptrl or node.tn.ptrl:
                         if node.tkname() in ("+","-","*","/","%"):
-                            compiler_error(node, "cannot permorm arithmetic operations on pointers, please cast to int, then back to pointers")
+                            compiler_error(node, "cannot perform arithmetic operations on pointers, please cast to int, then back to pointers")
                         else:
-                            compiler_error(node, "cannot permorm logic operations on pointers, please cast to int, then back to pointers")
+                            compiler_error(node, "cannot perform logic operations on pointers, please cast to int, then back to pointers")
                     casted_src = cast(arg_names[1], src_node.tn, node.tn, level)[0]
                 else:
                     casted_src = arg_names[1]
 
                 match node.tkname():
                     case "+":
+                        if both_ints(dest_node, src_node):
+                            node.kind = kind.NUM_LIT
+                            node.token = (*node.token[:-1], str(int(dest_node.tkname()) + int(src_node.tkname())))
+                            return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = add {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "-":
+                        if both_ints(dest_node, src_node):
+                            node.kind = kind.NUM_LIT
+                            node.token = (*node.token[:-1], str(int(dest_node.tkname()) - int(src_node.tkname())))
+                            return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = sub {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "*":
+                        if both_ints(dest_node, src_node):
+                            node.kind = kind.NUM_LIT
+                            node.token = (*node.token[:-1], str(int(dest_node.tkname()) * int(src_node.tkname())))
+                            return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = mul {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "/":
+                        if both_ints(dest_node, src_node):
+                            node.kind = kind.NUM_LIT
+                            node.token = (*node.token[:-1], str(int(dest_node.tkname()) // int(src_node.tkname())))
+                            return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = sdiv {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "%":
+                        if both_ints(dest_node, src_node):
+                            node.kind = kind.NUM_LIT
+                            node.token[-1] = str(int(dest_node.tkname()) % int(src_node.tkname()))
+                            return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = srem {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
 
@@ -1742,6 +1825,10 @@ out.close()
 
 # debug(declared_structs, "\n", human_type, "\n", [(x.tn.type, x.tn.ptrl) for key, x in declared_structs.items()])
 
-os.system(f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.b}")
+compiler_call = f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.b}"
+
+debug("[INFO]: compiler call:", compiler_call)
+
+os.system(compiler_call)
 if not args.emit_llvm:
     os.system(f"del {OUTFILE_PATH}")
