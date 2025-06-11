@@ -12,6 +12,7 @@ extern int strcmp(ptr char, ptr char)
 extern void va_start(ptr void)
 extern void va_end(ptr void)
 extern int vsnprintf(ptr void, ptr char, ptr char, ptr void)
+extern ptr char getcwd(ptr char, int)
 
 extern void printf(ptr char, <>)
 
@@ -23,21 +24,27 @@ macro for(decl, cond, inc, body) {{
 };}
 
 ptr void nullptr = 0
-
 ptr void NULL = 0
+bool true = 1
+bool false = 0
 
 extern ptr void memcpy(ptr void, ptr void, int)
 
 struct String {
     ptr char items,
-    int capacity,
     int length,
+    int capacity,
 }
 
 struct String_vec {
     ptr String items,
     int length,
     int capacity,
+}
+
+func int max(int a, int b) {
+    if a > b return a;
+    return b;
 }
 
 macro _load(ptr) { ptr[0]; }
@@ -48,6 +55,14 @@ func bool is_letter(char letter) {
     return (letter >= 65 && letter <= 90) || (letter >= 97 || letter <= 122);
 }
 
+func bool is_space(char letter) {
+    if letter == 10 || letter == 32 || letter == 13 || letter == 9 {
+        return true;
+    } else {
+        return false;
+    };
+    return false;
+}
 
 macro str_assert(cond, message) {
     if (!cond) { printf("ASSERT: %s", message); exit(0-1); };
@@ -65,11 +80,13 @@ func String str_init() {
     String made;
 	made.length = 0;
 	made.capacity = 0;
-	made.items = malloc(0);
+	made.items = NULL;
 	return made;
 }
 
-macro c(str_name) { (str_name).items; }
+macro cstr(str_name) { (str_name).items; }
+
+macro copy(__str) { SS(cstr(__str)); }
 
 func void str_set(ptr String _str, ptr char other) {
 	String str = *_str;
@@ -122,23 +139,21 @@ func void str_insert(ptr String _str, int _pos, ptr char _new) {
 }
 
 func void str_insert_char(ptr String _str, int _pos, char _new) {
-    String str = *_str;
-    ptr char old_items = str.items;
-    int new_len = 1;
-    str.capacity = next_powt(str.length + 1);
-    str.items = malloc(str.capacity);
-    int idx = 0;
-    while (str.length+1 > idx) {
-        if (idx == _pos) {
-            str.items[idx] = _new;
-        };
-        str.items[idx+1] = old_items[idx];
-        idx++;
+    if _str.length+1 >= _str.capacity {
+        _str.items = realloc(_str.items, _str.capacity*2);
+        _str.capacity = _str.capacity*2;
     };
-    str.length = str.length + new_len;
-    str.items[str.length] = 0;
-    if (old_items) free(old_items);
-    *_str = str;
+    int inserted = 0;
+    char old;
+    for(int idx=0, idx < _str.length+1, idx++, {
+        old = _str.items[idx]; 
+        if idx == _pos {
+            inserted++;
+            _str.items[idx] = _new;
+        };
+        _str.items[idx+inserted] = old;
+    });
+    _str.length = _str.length+1;
     return;
 }
 
@@ -148,6 +163,13 @@ func void str_add(ptr String str, ptr char _new) {
 
 func void str_add_char(ptr String str, char _new) {
     str_insert_char(str, str.length, _new); return;
+}
+
+func void str_free(String str) {
+    str.length = 0;
+    str.capacity = 0;
+    free(str.items);
+    return;
 }
 
 func void str_remove(ptr String _str, int _pos, int _len) {
@@ -166,18 +188,46 @@ func void str_remove(ptr String _str, int _pos, int _len) {
     return;
 }
 
-func void str_free(ptr String _str) {
-    String str = *_str;
-    str.length = 0;
-    str.capacity = 1;
-    free(str.items);
-    str.items = malloc(1);
-    str.items[0] = 0;
-    *_str = str;
+func String str_substr(String str, int pos, int end) {
+    int len = end-pos;
+    String buf;
+    buf.capacity = len+1;
+    buf.length = len;
+    buf.items = malloc(len+1);
+    
+    memcpy(buf.items, addptr(str.items, pos), len+1);
+    buf.items[len] = 0;
+    return buf;
+}
+
+func void str_lstrip(ptr String str) {
+    int pos = 0;
+    for(int i = 0, i < *str.length, ++i, {
+        if is_space(*str.items[i]) {
+            pos++;
+        } else {
+            if pos {
+                String old_str = *str;
+                *str = str_substr(old_str, pos, old_str.length+1);
+                str_free(old_str);
+                return;
+            } else { return; };
+        };
+    });
     return;
 }
 
-func void str_clear(ptr String _str) { _str.length = 0; return; }
+func bool cstr_is_space(ptr char _str) {
+    int length = strlen(_str);
+    for(int i = 0, i < length, ++i, {
+        if !(is_space(_str[i])) {
+            return false;
+        };
+    });
+    return true;
+} 
+
+func void str_clear(ptr String _str) { _str.length = 0; *(_str.items) = 0; return; }
 
 func void str_replace(ptr String _str, ptr char _old, ptr char _new) {
     String str = *_str;
@@ -199,47 +249,48 @@ func void str_replace(ptr String _str, ptr char _old, ptr char _new) {
 func String_vec str_vec_init() {
     String_vec made;
     made.length = 0;
-    made.items = malloc(0);
+    made.items = NULL;
     made.capacity = 0;
     return made;
 }
 
 func void str_vec_append(ptr String_vec _vec, String _str) {
     String_vec vec = *_vec;
-    if (vec.capacity <= (vec.length+1)) {
+    if (vec.length+1 >= vec.capacity) {
+        int old_cap = vec.capacity;
         vec.capacity = vec.capacity * 2;
         if !(vec.capacity) {
             vec.capacity = 1;
         };
-        ptr String new_items = malloc(sizeof(String)+1);
-        memcpy(new_items, vec.items, vec.capacity);
-        free(vec.items);
+        vec.items = realloc(vec.items, sizeof(String)*vec.capacity);
     };
-    vec.length++;
-    vec.items[vec.length] = _str;
+    vec.items[vec.length++] = _str;
     *_vec = vec;
     return;
 }
 
-func String_vec str_split(ptr String _str, char c) {
-    int idx = 0;
+func String str_copy(String _str) {
+    return str_substr(_str, 0, _str.length);
+}
+
+func String_vec str_split(String _str, char c) {
     String_vec vtemp = str_vec_init();
-    String temp = str_init();
-    for (int idx=0, idx < (*_str.length), idx++, {
-        if (_str.items[idx] == c) {
+    int found = -1;
+    String temp;
+    int len = _str.length;
+    for (int idx=0, idx < len, idx++, {
+        if _str.items[idx] == c {
+            temp = str_substr(_str, found+1, idx);
+            found = idx;
             str_vec_append(&vtemp, temp);
-            str_clear(&temp);
-        } else {
-            str_add_char(&temp, *_str.items[idx]);
         };
     });
-    str_vec_append(&vtemp, temp);
+    str_vec_append(&vtemp, str_substr(_str, found+1, _str.length));
     return vtemp;
 }
 
 func ptr char cstr_fmt(ptr char fmt, <>) {
     ptr void args;
-    va_start(&args);
 
     int size = vsnprintf(NULL, 0, fmt, args);
     va_end(args);
@@ -249,7 +300,6 @@ func ptr char cstr_fmt(ptr char fmt, <>) {
     ptr char buffer = malloc(size + 1);
     if (!buffer) return NULL;
     
-    va_start(&args);
 
     vsnprintf(buffer, size + 1, fmt, args);
     va_end(args);
@@ -262,4 +312,14 @@ func void str_fmt(ptr String fmt, <>) {
     fmt.items = cstr_fmt(fmt.items);
     free(to_free);
     return;
+}
+
+func ptr char get_cwd() { # swami's getcwd
+    ptr char temp = malloc(4096);
+    getcwd(temp, 4096);
+    int len = strlen(temp);
+    ptr char buf = malloc(len+1);
+    memcpy(buf, temp, len+1);
+    free(temp);
+    return buf;
 }

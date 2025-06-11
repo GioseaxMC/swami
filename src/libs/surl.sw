@@ -30,20 +30,20 @@ func int curl_write_tobuff(ptr char p, int size, int count, ptr ptr char userdat
 
 }
 
-macro surl_init(at_fail) {{
+macro surl_init(__at_fail) {{
     int __code = curl_global_init(CURL_GLOBAL_DEFAULT);
-    if ( __code ) { at_fail; };
+    if ( __code ) { __at_fail; };
 };}
 
-macro surl_fetch(url, buffer, at_fail) {{
+macro surl_fetch(__url, __buffer, __at_fail) {{
     ptr void __curl = curl_easy_init();
-    if ( !__curl ) { at_fail; };
-    curl_easy_setopt(__curl, CURLOPT_URL, url);
+    if ( !__curl ) { __at_fail; };
+    curl_easy_setopt(__curl, CURLOPT_URL, __url);
     curl_easy_setopt(__curl, CURLOPT_WRITEFUNCTION, curl_write_tobuff);
-    curl_easy_setopt(__curl, CURLOPT_WRITEDATA, &buffer);
+    curl_easy_setopt(__curl, CURLOPT_WRITEDATA, &__buffer);
     curl_easy_perform(__curl);
     curl_easy_cleanup(__curl);
-    buffer;
+    __buffer;
 };}
 
 macro surl_close() {

@@ -220,26 +220,23 @@ def llvm_escape(s: str) -> str:
     return "".join(result)
 
 def find_next(line: str) -> int:
-    idx = 0
-    length = len(line)
-    while idx < length:
-        c = line[idx]
-        if c == '"':
-            idx += 1
-            while idx < length:
-                if line[idx] == '"' and (line[idx - 1] != '\\' or (idx >= 2 and line[idx - 2] == '\\')):
-                    return max(1, idx + 1)
-                idx += 1
-            return -1
+    for idx, c in enumerate(line):
+        if c == "\"":
+            to_search = line[idx+1:]
+            for j in range(len(to_search)):
+                c = to_search[j]
+                if c == "\"":
+                    if to_search[j-1] != "\\": # TODO
+                        return max(1, j+2)
         if c == '#':
             return -2
-        if c in human_operands and (idx == 0 or line[idx - 1] == ' '):
+        if c in human_operands and (idx == 0 or line[idx-1] == " "):
+            # # debug(f"CHECKING LINE: '{line[idx:idx+2]}'")
             if line[idx:idx+2] in human_operands:
-                return max(1, idx + 2)
-            return max(1, idx + 1)
+                return max(1, idx+2)
+            return max(1, idx+1)
         if not uisalnum(c):
             return max(1, idx)
-        idx += 1
     return -1
 
 def lex_tokens(line: str):
@@ -1750,19 +1747,12 @@ def compile_node(node, level, assignable = 0):
             iota()
             ret = compile_node(node.block, nlevel)
             if node.block.kind != kind.RET or not len(node.block.children):
-                if len(node.block.children) == 0:
-                    if (node.block.children[-1].tn.type, node.block.children[-1].tn.ptrl) == (sw_type.VOID):
-                        out_writeln(f"ret {rlt(node.tn)}", nlevel)
-                    else:
-                        out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
-
-                elif not type_cmp(node.tn, node.block.children[-1].tn) and (node.tn.type, node.tn.ptrl) != (sw_type.VOID, 0):
+                if len(node.block.children) == 0 or node.block.children[-1].tn.type == sw_type.VOID:
+                    out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
+                elif not type_cmp(node.tn, node.block.children[-1].tn):
                     compiler_error(node.block.children[-1], f"return types don't match: function is of type '{hlt(node.tn)}' but '{hlt(node.block.children[-1].tn)}' was returned")
                 else:
-                    if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
-                        out_writeln("ret void", nlevel)
-                    else:
-                        out_writeln(f"ret {rlt(node.tn)} {ret}", nlevel)
+                    out_writeln(f"ret {rlt(node.tn)} {ret}", nlevel)
             out_writeln("}\n", 0)
         
         case kind.STRUCT:

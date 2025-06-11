@@ -16,7 +16,7 @@ macro da_append(da, item) {
 }
 
 macro da_init(da) {
-    (da).items = malloc(0);
+    (da).items = NULL;
     (da).length = 0;
     (da).capacity = 0;
 }
@@ -31,11 +31,11 @@ macro da_len(da) {
 }
 
 macro da_from_ptr(da, _ptr, _len) {
-    (da).items = malloc(_len * sizeof(*_ptr));
-    (da).length = _len;
-    (da).capacity = _len;
+    (da).items = malloc((_len) * sizeof(*_ptr));
+    (da).length = (_len);
+    (da).capacity = (_len);
     
-    memcpy((da).items, _ptr, _len*sizeof(*_ptr));
+    memcpy((da).items, _ptr, (_len)*sizeof(*_ptr));
 }
 
 macro da_begin(da) { (da).items; }
@@ -63,6 +63,13 @@ macro da_remove(da, idx) {{
     };
     (da).length = (da).length - _popped;
 };}
+
+macro da_free(da) {
+    free((da).items);
+    (da).items = NULL;
+    (da).length = 0;
+    (da).capacity = 0;
+}
 
 macro dynamic_array(type, name) {
     struct name {
