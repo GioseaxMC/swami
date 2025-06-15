@@ -40,7 +40,7 @@ func Parser make_parser(ptr char desc) {
     return parser;
 }
 
-func ptr void add_arg(ptr Parser _parser, ptr char arg_name, ptr char desc, int atype) {
+func ptr void add_arg_impl(ptr Parser _parser, ptr char arg_name, ptr char desc, int atype) {
     Parser parser = *_parser;
     ptr void pointer = malloc(8);
     
@@ -54,6 +54,18 @@ func ptr void add_arg(ptr Parser _parser, ptr char arg_name, ptr char desc, int 
 
     *_parser = parser;
     return pointer;
+}
+
+macro add_integer_arg(__parser, __arg_name, __desc) {
+    cast add_arg_impl(&__parser, __arg_name, __desc, IntArg) as ptr int;
+}
+
+macro add_option(__parser, __arg_name, __desc) {
+    cast add_arg_impl(&__parser, __arg_name, __desc, BoolArg) as ptr int;
+}
+
+macro add_string_arg(__parser, __arg_name, __desc) {
+    cast add_arg_impl(&__parser, __arg_name, __desc, StrArg) as ptr ptr char;
 }
 
 func void parser_show_help(ptr Parser parser, ptr ParserArgs argv) {
@@ -87,6 +99,12 @@ func void parser_show_help(ptr Parser parser, ptr ParserArgs argv) {
     });
 
     return;
+}
+
+func ParserArgs args_as_da(int argc, ptr ptr char argv) {
+    ParserArgs args;
+    da_from_ptr(args, argv, argc);
+    return args;
 }
 
 func void parse_args(ptr Parser _parser, ptr ParserArgs argv) {

@@ -194,6 +194,7 @@ human_operands = [
     "[",
     "(",
     "@",
+    "%",
     "->",
 ]
 
@@ -325,9 +326,12 @@ class typenode:
     
     def isptr(self):
         return self.ptrl or self.outptrl
+    
+    def iscomplex(self):
+        return self.type > sw_type.ANY
 
     def get_zero(self):
-        return "none" if self.isptr() else "0"
+        return "null" if self.isptr() else "0"
     
     def copy(self):
         new = typenode()
@@ -499,7 +503,7 @@ current_namespace = global_vars
 
 macro_call_stack: list[Node] = []
 
-def add_usr_var(node):
+def add_usr_var(node, parse_indentation):
     global global_vars, current_namespace
     if parse_indentation:
         # debug("[USINGNAMESPACE]: current_namespace for", node.tkname())
@@ -557,10 +561,10 @@ class Manager:
             if str == (x := self.assumed.pop()):
                 return self.current()
             else:
-                parser_error(self.current(), f"Assumed '{x}' looking for '{str}' but got '&t'", 1)
+                parser_error(self.current(), f"Assumed '{x}' looking for '{str}' but got '&t'")
         else:
             res = self.consume()
-            return res if res[-1] == str else parser_error(res, f"Expected '{str}' but got '&t'", 1)
+            return res if res[-1] == str else parser_error(res, f"Expected '{str}' but got '&t'")
 
     def prev(self):
         assert self.pointer >= 0, "Negative pointer"
@@ -604,6 +608,7 @@ def get_importance(token):
 
         ("+", "-"),
         ("*", "/"),
+        ("%",),
         ("(",),
 
         (".",),
@@ -642,11 +647,13 @@ def check_global(node, level):
 nodes = list()
 
 def funcref_from_word(word: Node):
-    called = declared_funcs[word.tkname()]
-    word.tn = typenode.from_node(called)
-    word.tn.outptrl+=1
-    word.kind = kind.FUNCREF
-    return word
+    if word.tkname() in declared_funcs:
+        called = declared_funcs[word.tkname()]
+        word.tn = typenode.from_node(called)
+        word.tn.outptrl+=1
+        word.kind = kind.FUNCREF
+        return word
+    compiler_error(word, "Cannot call unknown word '&t'")
 
 def sizeof(tn: typenode): # in bytes please
     # debug({(type, ptrl)})
@@ -910,7 +917,7 @@ def parse_funcdecl(node):
     parse_indentation += 1
     node.children = parse_named_args(")")
     for arg in node.children:
-        add_usr_var(arg)
+        add_usr_var(arg, parse_indentation)
     parse_indentation -= 1
     node.block = parse_block()
     current_namespace = global_vars
@@ -977,7 +984,7 @@ def parse_vardecl(node):
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid variable name")
-    exists = add_usr_var(node)
+    exists = add_usr_var(node, parse_indentation)
     if exists:
         node.kind = kind.VARREF
     # debug("[VARDECL]:", node.tkname())
@@ -1152,7 +1159,7 @@ def parse_primary():
         if not tokenizable(node.tkname()):
             parser_error(node.tk, "'&t' is not a valid variable name")
         node.tn = ftn(sw_type.CHAR, 1)
-        exists = add_usr_var(node)
+        exists = add_usr_var(node, parse_indentation)
         if exists:
             parser_error(node.token, "Redeclaration of variable '&t'")
 
@@ -1480,8 +1487,10 @@ def compile_node(node, level, assignable = 0):
             else:
                 if node.block:
                     argn = compile_node(node.block, level)
-                    if node.tn.ptrl:
+                    if node.tn.isptr():
                         out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} null", level)
+                    elif node.tn.iscomplex():
+                        out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} zeroinitializer", level)
                     else:
                         out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} {argn}", level)
                 else:
@@ -1531,9 +1540,17 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             if node.tkname() == "=":
-                dest = compile_node(dest_node, level, 1)
-                # debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
                 src = compile_node(src_node, level)
+                if dest_node.kind == kind.WORD:
+                    dest_node.tn = src_node.tn
+                    dest_node.kind = kind.VARDECL
+                    print(hlt(src_node.tn))
+                    add_usr_var(dest_node, level)
+                    out_writeln(f"%{dest_node.tkname()} = alloca {rlt(dest_node.tn)}", level)
+                    dest = f"%{dest_node.tkname()}"
+                else:
+                    dest = compile_node(dest_node, level, 1)
+                # debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
                 if src_node.tn.ptrl and dest_node.tn.ptrl and dest_node.tn.type == sw_type.CHAR:
                     out_writeln(f"store ptr {src}, ptr {dest}", level)
                 elif src_node.kind == kind.NUM_LIT:
@@ -1649,7 +1666,6 @@ def compile_node(node, level, assignable = 0):
                         out_write(", ", 0)
                     out_write(f"{rlt(src_node.children[idx].tn)} {arg}", 0)
                 out_writeln(")", 0)
-
                 
             else:
                 for idx, arg in enumerate(node.children):
@@ -1809,7 +1825,8 @@ def compile_node(node, level, assignable = 0):
             exit("Deprecated")
                     
         case kind.FUNCDECL:
-            global iota_counter
+            global iota_counter, current_namespace;
+            current_namespace = func_namespaces[node.tkname()]
             iota_counter = -1
             out_write(f"define {rlt(node.tn)} @{node.tkname()}(", level)
             for idx, arg in enumerate(node.children):
@@ -1899,7 +1916,12 @@ def compile_node(node, level, assignable = 0):
         case kind.MACRODECL:
             if DEBUGGING:
                 out_writeln("; '{node.tkname()}' macro declared here", level)
-
+        
+        case kind.WORD:
+            if node.tkname() in current_namespace:
+                node.kind = kind.VARREF
+                node.tn = current_namespace[node.tkname()].tn
+                return compile_node(node, level, assignable)
         # case kind.NULL: # null nodes should not make it to the compilation stage
         #     ...
 

@@ -1,11 +1,6 @@
 #include <stdio.h>
 
 int main(void) {
-
-    printf("first!\b");
-
+    printf("first!");
     return 0;
-}
-
-
-
+};

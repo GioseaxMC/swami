@@ -16,7 +16,7 @@ macro da_append(da, item) {
 }
 
 macro da_init(da) {
-    (da).items = NULL;
+    (da).items = cast 0 as ptr void;
     (da).length = 0;
     (da).capacity = 0;
 }
