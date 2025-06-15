@@ -9,18 +9,28 @@ extern int strlen(ptr char)
 extern void strcpy(ptr char, ptr char)
 extern ptr char strstr(ptr char, ptr char)
 extern int strcmp(ptr char, ptr char)
-extern void va_start(ptr void)
-extern void va_end(ptr void)
-extern int vsnprintf(ptr void, ptr char, ptr char, ptr void)
-extern ptr char getcwd(ptr char, int)
-
-extern void printf(ptr char, <>)
-
 macro streq(sstr, ssstr) { strcmp(sstr, ssstr) == 0; }
+
+extern int vsnprintf(ptr void, ptr char, ptr char, ptr void)
+extern int snprintf(ptr void, ptr char, ptr char, <>)
+extern int printf(ptr char, <>)
+extern int fprintf(ptr void, ptr char, <>)
+
+extern void write(int, ptr char, int)
+extern int read(int, ptr char, int)
 
 macro for(decl, cond, inc, body) {{
     decl;
-    while (cond) {body; inc; };
+    while (cond) { body; inc; };
+};}
+
+macro TODO(__random_shit) {
+    error "Not implemented yet."
+}
+
+macro salloc(size) {{
+    reserve size as __stack_alloced;
+    __stack_alloced;
 };}
 
 ptr void nullptr = 0
@@ -49,7 +59,9 @@ func int max(int a, int b) {
 
 macro _load(ptr) { ptr[0]; }
 
-macro addptr(p, offset) { cast offset + cast p as int as ptr void; }
+macro op_ptr(p1, op, p2) { cast cast p1 as int op cast p2 as int as ptr void; }
+
+macro addptr(__p__, __offset__) { op_ptr(__p__, +, __offset__); }
 
 func bool is_letter(char letter) {
     return (letter >= 65 && letter <= 90) || (letter >= 97 || letter <= 122);
@@ -165,7 +177,7 @@ func void str_add_char(ptr String str, char _new) {
     str_insert_char(str, str.length, _new); return;
 }
 
-func void str_free(String str) {
+func void str_free(ptr String str) {
     str.length = 0;
     str.capacity = 0;
     free(str.items);
@@ -209,7 +221,7 @@ func void str_lstrip(ptr String str) {
             if pos {
                 String old_str = *str;
                 *str = str_substr(old_str, pos, old_str.length+1);
-                str_free(old_str);
+                str_free(&old_str);
                 return;
             } else { return; };
         };
@@ -289,37 +301,23 @@ func String_vec str_split(String _str, char c) {
     return vtemp;
 }
 
-func ptr char cstr_fmt(ptr char fmt, <>) {
-    ptr void args;
+macro cstr_fmt(__fmt__, __args__) {{
+    int __size__ = snprintf(NULL, 0, __fmt__, __args__);
+    ptr char __str__ = malloc(__size__+1);
+    snprintf(__str__, __size__+1, __fmt__, __args__);
+    __str__;
+};}
 
-    int size = vsnprintf(NULL, 0, fmt, args);
-    va_end(args);
-    
-    if (size < 0) return NULL;
-    
-    ptr char buffer = malloc(size + 1);
-    if (!buffer) return NULL;
-    
+func void __write_and_free(int fp, ptr char str) { write(fp, str, strlen(str)); free(str); }
 
-    vsnprintf(buffer, size + 1, fmt, args);
-    va_end(args);
-
-    return buffer;
+macro eprintf(__str__, __fmt__) {
+    __write_and_free(2, cstr_fmt (__str__, __fmt__) );
 }
 
-func void str_fmt(ptr String fmt, <>) {
-    ptr char to_free = fmt.items;
-    fmt.items = cstr_fmt(fmt.items);
-    free(to_free);
-    return;
+macro str_fmt(__str, __fmt) {
+    ptr char __cstr__ = cstr_fmt((__str).items, [__fmt]);
+    str_free(&(__str));
+    __str = SS(__cstr__);
+    __str;
 }
 
-func ptr char get_cwd() { # swami's getcwd
-    ptr char temp = malloc(4096);
-    getcwd(temp, 4096);
-    int len = strlen(temp);
-    ptr char buf = malloc(len+1);
-    memcpy(buf, temp, len+1);
-    free(temp);
-    return buf;
-}

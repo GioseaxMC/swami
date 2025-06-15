@@ -14,7 +14,7 @@ libs = Path(os.path.realpath(__file__)).parent / "libs"
 
 parser = argparse.ArgumentParser(description="Swami compiler:\n\tusage: <python> swami.py main.sw -o main")
 
-parser.add_argument('--backend', default="clang", help="the language backend to use to compile llvm (default clang)")
+parser.add_argument('-backend', default="clang", help="the language backend to use to compile llvm (default clang)")
 parser.add_argument('-d', action='store_true', help="Enable # debug mode")
 
 parser.add_argument('sourcecode', help="The swami file")
@@ -38,8 +38,8 @@ def iota(reset: int = 0):
     return iota_counter
 
 parse_indentation = 0
-
 DEBUGGING = args.d
+error_sum = 0
 
 def debug(*children, **kwchildren) -> None:
     if not DEBUGGING:
@@ -72,6 +72,15 @@ llvm_type = [
     "i8",
     "i1",
     "...",
+]
+
+sizeof_type = [
+    8,
+    8,
+    0,
+    1,
+    1,
+    0
 ]
 
 def rlt(tn):
@@ -135,18 +144,20 @@ class WindowPrint:
 
 
 def parser_error(token, prompt, errno = -1):
+    global error_sum; error_sum += abs(errno)
     COLOR = f.MAGENTA
     if errno:
         COLOR = f.RED
     p = WindowPrint(COLOR)
-    p.print(get_tk_pos(token)+": "+("ERROR" if errno else "WARNING")+": "+prompt.replace("&t", token[-1]))
+    eprint = p.print
+    eprint(get_tk_pos(token)+": "+("ERROR" if errno else "WARNING")+": "+prompt.replace("&t", token[-1]))
     with open(token[0], "r") as fp:
         content = fp.read()
-        p.print("\n  "+content.split("\n")[token[1]])
-        p.print("  "+" "*token[2]+"^")
-        p.print("  "+" "*token[2]+"| here")
+        eprint("\n  "+content.split("\n")[token[1]])
+        eprint("  "+" "*token[2]+"^")
+        eprint("  "+" "*token[2]+"| here")
     p.flush()
-    if errno:
+    if errno<0:
         exit(errno)
 
 def compiler_error(node, prompt, errno = -1):
@@ -312,11 +323,11 @@ class typenode:
     def is_callable(self):
         return len(self.children)
     
-    def is_ptr(self):
+    def isptr(self):
         return self.ptrl or self.outptrl
 
     def get_zero(self):
-        return "none" if self.is_ptr() else "0"
+        return "none" if self.isptr() else "0"
     
     def copy(self):
         new = typenode()
@@ -324,11 +335,18 @@ class typenode:
         new.ptrl = self.ptrl
         new.children = self.children
         return new
+    
+    def simple(self):
+        new = typenode()
+        new.type = self.type
+        new.ptrl = self.ptrl
+        return new
 
     def __add__(self, n):
         new = typenode()
         new.type = self.type
-        new.outptrl = self.outptrl+n
+        new.outptrl = self.outptrl
+        new.ptrl = self.ptrl+n
         new.children = self.children
         return new
 
@@ -336,6 +354,7 @@ class typenode:
         new = typenode()
         new.type = self.type
         new.ptrl = self.ptrl-n
+        new.outptrl = self.outptrl
         new.children = self.children
         return new
 
@@ -419,6 +438,7 @@ class kind:
     FUNCREF = iota()
 
     LINK = iota()
+    RESERVE = iota()
 
     NULL = iota()
 
@@ -460,6 +480,7 @@ human_kind = [
     "function reference",
 
     "linker",
+    "reserve",
 
     "null",
 ]
@@ -476,10 +497,12 @@ declared_macros: dict[Node] = {}
 
 current_namespace = global_vars
 
+macro_call_stack: list[Node] = []
+
 def add_usr_var(node):
     global global_vars, current_namespace
     if parse_indentation:
-        # debug("[USINGNAMESPACE]: current_namespace")
+        # debug("[USINGNAMESPACE]: current_namespace for", node.tkname())
         namespace = current_namespace
     else:
         # debug("[USINGNAMESPACE]: global_vars")
@@ -534,10 +557,10 @@ class Manager:
             if str == (x := self.assumed.pop()):
                 return self.current()
             else:
-                parser_error(self.current(), f"Assumed '{x}' looking for '{str}' but got '&t'")
+                parser_error(self.current(), f"Assumed '{x}' looking for '{str}' but got '&t'", 1)
         else:
             res = self.consume()
-            return res if res[-1] == str else parser_error(res, f"Expected '{str}' but got '&t'")
+            return res if res[-1] == str else parser_error(res, f"Expected '{str}' but got '&t'", 1)
 
     def prev(self):
         assert self.pointer >= 0, "Negative pointer"
@@ -608,7 +631,7 @@ def print_node(node, indent = 0):
 
 def check_global(node, level):
     not_global = kind.IF, kind.WHILE, kind.RET
-    _global = kind.FUNCDECL, kind.EXTERN, kind.STRUCT, kind.MACRODECL
+    _global = kind.FUNCDECL, kind.EXTERN, kind.STRUCT
     if level:
         if node.kind in _global:
             compiler_error(node, "the '&t' instruction can only be used at a global level")
@@ -617,6 +640,29 @@ def check_global(node, level):
             compiler_error(node, "the '&t' instruction cannot be used at a global (and so static) level")
 
 nodes = list()
+
+def funcref_from_word(word: Node):
+    called = declared_funcs[word.tkname()]
+    word.tn = typenode.from_node(called)
+    word.tn.outptrl+=1
+    word.kind = kind.FUNCREF
+    return word
+
+def sizeof(tn: typenode): # in bytes please
+    # debug({(type, ptrl)})
+    if tn.isptr():
+        return 8
+    return sizeof_type[tn.type]
+
+def get_max_size(tn: typenode): # in bytes please
+    if tn.isptr():
+        return 8
+    if tn.type > sw_type.ANY:
+        structinfo = declared_structs[hlt(tn)]
+        max_size = 0
+        for child in structinfo.children:
+            max_size = max(max_size, get_max_size(child.tn))
+    return sizeof(tn)
 
 def parse():
     global parse_indentation
@@ -750,9 +796,9 @@ def parse_macro_args():
         token = tokens.consume()
         tkname = token[-1]
         # debug("[MACROARG]: parsing", tkname, "with indentation", m_level)
-        if tkname in ("(", "{"): # check for macro related bugs
+        if tkname in ("(", "{", "["): # check for macro related bugs
             m_level+=1
-        if tkname in (")", "}"):
+        if tkname in (")", "}", "]"):
             if m_level:
                 m_level-=1
                 body_tokens.append(token)
@@ -764,12 +810,15 @@ def parse_macro_args():
             running = 0
         else:
             body_tokens.append(token)
+    if body_tokens[0][-1] == "[":
+        body_tokens = body_tokens[1:-1]
     return body_tokens
 
 def parse_macro_call():
     global tokens, parse_indentation
     node = Node()
     node.token = tokens.prev()
+    macro_call_stack.append(node)
     macro_args = []
     tokens.expect("(")
     while tokens.current()[-1] != ")":
@@ -831,6 +880,7 @@ def parse_macro_call():
     parse_indentation = old_pi
 
     tokens = og_tokens
+    macro_call_stack.pop()
     return node;
 
 def parse_block():
@@ -911,6 +961,14 @@ def parse_struct(node):
     llvm_type.append(f"%struct.{node.tkname()}")
     tokens.expect("{")
     node.children = parse_named_args("}")
+    size = 0
+    max_size = 0
+    for nd in node.children:
+        y = sizeof(nd.tn)
+        max_size = max(max_size, get_max_size(nd.tn))
+        size = size + ((y - size%y) % y) + y
+    size = size + (max_size - size%max_size) % max_size
+    sizeof_type.append(size)
     node.tn.ptrl = 0
     node.tn.type = len(llvm_type)-1
     declared_structs[node.tkname()] = node
@@ -945,7 +1003,7 @@ def parse_varref(node):
     elif node.tkname() in global_vars:
         namespace = global_vars
     else: 
-        parser_error(node.token, "'&t' is undeclared")
+        parser_error(node.token, "'&t' is undeclared") # this should be unreachable but still
     
     var_info = namespace[node.tkname()]
     # debug("[VARREF]:", node.tkname())
@@ -1044,7 +1102,7 @@ def parse_primary():
     
     elif token[-1] == "&":
         node.kind = kind.GETPTR
-        node.block = parse_primary()
+        node.block = parse_expression(0)
         node.tn = node.block.tn.copy()
 
     elif token[-1] == "*":
@@ -1082,14 +1140,38 @@ def parse_primary():
         else:
             ...
             # debug("[RETURN]: no children")
+    
+    elif token[-1] == "reserve":
+        node.kind = kind.RESERVE
+        size_tk = tokens.consume()
+        node.val = size_tk[-1]
+        if not node.val.isnumeric():
+            parser_error(size_tk, "Expected an integer literal, got '&t'")
+        tokens.expect("as")
+        node.token = tokens.consume()
+        if not tokenizable(node.tkname()):
+            parser_error(node.tk, "'&t' is not a valid variable name")
+        node.tn = ftn(sw_type.CHAR, 1)
+        exists = add_usr_var(node)
+        if exists:
+            parser_error(node.token, "Redeclaration of variable '&t'")
 
+        
     elif token[-1] == "link":
         node.kind = kind.NULL
         node.val = tokens.consume()[-1]
         if node.val not in declared_links:
             declared_links.append(node.val)
             args.b += f" -l{node.val[1:-1]}"
-        
+    
+    elif token[-1] == "error":
+        msg = tokens.consume()[-1]
+        if represents_string(msg):
+            msg = msg[1:-1]
+        if len(macro_call_stack):
+            compiler_error(macro_call_stack.pop(), msg)
+        else:
+            compiler_error(node, msg)
 
     elif token[-1] == "++":
         node.kind = kind.INC
@@ -1118,8 +1200,8 @@ def parse_primary():
         node.block = parse_expression(0)
 
     elif token[-1] == "macro":
-        if parse_indentation:
-            parser_error(token, "macro statements can only be made at a global level")
+        # if parse_indentation:
+        #     parser_error(token, "macro statements can only be made at a global level")
         node = parse_macro_decl()
         node.kind = kind.MACRODECL
         
@@ -1163,8 +1245,6 @@ def parse_primary():
     elif tokenizable(token[-1]):
         if parse_indentation:
             node.kind = kind.WORD
-            if tokens.current()[-1] == "(":
-                parser_error(token, "Undeclared macro or function cannot be called")
             node.block = parse_incdec()
         else:
             parser_error(token, "Unknown instruction '&t'")
@@ -1211,23 +1291,6 @@ def out_writeln(content, level):
     out_write(content, level)
     out_write("\n", 0)
 
-def sizeof(type: int, ptrl: int): # in bytes please
-    # debug({(type, ptrl)})
-    if ptrl:
-        return 8
-    match type:
-        case sw_type.PTR:
-            return 8
-        case sw_type.INT:
-            return 8
-        case sw_type.VOID:
-            return 0
-        case sw_type.CHAR:
-            return 1
-        case sw_type.BOOL:
-            return 1
-    return -1
-
 def type_cmp(type1, type2):
     if type1.ptrl and type2.ptrl:
         return 1
@@ -1240,8 +1303,8 @@ def type_cmp(type1, type2):
 
 def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, int, int]:
     typecmp = bool(src_tn.ptrl) - bool(dest_tn.ptrl) # > 0 
-    isptr = src_tn.is_ptr() or dest_tn.is_ptr()
-    bothp = src_tn.is_ptr() and dest_tn.is_ptr()
+    isptr = src_tn.isptr() or dest_tn.isptr()
+    bothp = src_tn.isptr() and dest_tn.isptr()
     if (src_tn.type, src_tn.ptrl) == (dest_tn.type, dest_tn.ptrl):
         # debug("Not casting, cuz same")
         return src, dest_tn.type, dest_tn.ptrl
@@ -1265,9 +1328,9 @@ def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str
         if dest_tn.type == sw_type.BOOL:
             out_writeln(f"%{iota()} = icmp ne {rlt(src_tn)} {src}, 0", level)
         else:
-            if sizeof(dest_tn.type, dest_tn.ptrl) > sizeof(src_tn.type, src_tn.ptrl):
+            if sizeof(dest_tn) > sizeof(src_tn):
                 out_writeln(f"%{iota()} = zext {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
-            elif sizeof(dest_tn.type, dest_tn.ptrl) < sizeof(src_tn.type, src_tn.ptrl):
+            elif sizeof(dest_tn) < sizeof(src_tn):
                 out_writeln(f"%{iota()} = trunc {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
             else:
                 out_writeln(f"%{iota()} = bitcast {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
@@ -1314,7 +1377,7 @@ def compile_node(node, level, assignable = 0):
         case kind.EXPRESSION:
             for arg in node.children:
                 arg_names.append(compile_node(arg, level, assignable))
-                node.tn = arg.tn.copy()
+                node.tn = arg.tn #.copy()
             return f"{arg_names[-1]}"
 
         case kind.RET:
@@ -1338,12 +1401,17 @@ def compile_node(node, level, assignable = 0):
 
         case kind.SIZEOF:
             compile_node(node.block, level)
-            node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl
-            out_writeln(f"%{iota()} = getelementptr {rlt(node.tn)}, {rlt(node.tn+1)} null, i32 1", level)
-            out_writeln(f"%{iota()} = ptrtoint {rlt(node.tn+1)} %{iota(-1)-1} to i64", level)
             node.tn.type = sw_type.INT
             node.tn.ptrl = 0
-            return f"%{iota(-1)}"
+            USE_LEGACY_SIZEOF = 1
+            if USE_LEGACY_SIZEOF:
+                out_writeln(f"%{iota()} = getelementptr {rlt(node.block.tn)}, {rlt(node.block.tn+1)} null, i32 1", level)
+                out_writeln(f"%{iota()} = ptrtoint {rlt(node.tn+1)} %{iota(-1)-1} to i64", level)
+                return f"%{iota(-1)}"
+            else:    
+                node.kind = kind.NUM_LIT
+                node.token = (*node.token[:3], str(sizeof(node.block.tn)))
+                return f"{sizeof(node.block.tn)}"
 
         case kind.STR_LIT:
             node.tn.type = sw_type.CHAR
@@ -1357,6 +1425,13 @@ def compile_node(node, level, assignable = 0):
         
         case kind.TYPE:
             ...
+
+        case kind.RESERVE:
+            var = iota()
+            out_writeln(f"%{var} = alloca [{node.val} x i8]", level)
+            out_writeln(f"%{node.tkname()} = alloca ptr", level)
+            out_writeln(f"store ptr %{var}, ptr %{node.tkname()}", level)
+            return f"%{node.tkname()}"
 
         case kind.UNARY:
             result = compile_node(node.block, level)
@@ -1512,11 +1587,11 @@ def compile_node(node, level, assignable = 0):
                     inc_dest = f"%{iota(-1)}"
                     if not assignable:
                         out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}", level)
-                    node.tn.type, node.tn.ptrl = field_node.tn.type, field_node.tn.ptrl
+                    node.tn = field_node.tn
                 else:
                     # out_writeln(f"%{iota()} = load {rlt(struct_node.tn.type, struct_node.tn.ptrl)}, ptr {dest}", level)
                     out_writeln(f"%{iota()} = extractvalue {rlt(struct_node.tn)} {dest}, {field_id}", level)
-                    node.tn.type, node.tn.ptrl = field_node.tn.type, field_node.tn.ptrl
+                    node.tn = field_node.tn
 
                 ret_val = f"%{iota(-1)}"
 
@@ -1528,8 +1603,11 @@ def compile_node(node, level, assignable = 0):
                 return ret_val
 
             elif node.tkname() == "(": # FUNCALL
+                if dest_node.kind == kind.WORD:
+                    dest_node = funcref_from_word(dest_node)
                 dest = compile_node(dest_node, level, 1)
-                if dest in ("@va_start", "@va_end"):
+                node.tn = dest_node.tn.simple()
+                if dest in ("@va_start", "@va_end", "@va_copy"):
                     to_call = "@llvm."+dest[1:]
                 else:
                     to_call = dest
@@ -1701,7 +1779,7 @@ def compile_node(node, level, assignable = 0):
         case kind.GETPTR:
             name = compile_node(node.block, level, 1)
             node.kind = node.block.kind
-            node.tn.ptrl += 1
+            node.tn = node.block.tn+1
             return f"{name}"
 
         case kind.REFPTR:
@@ -1751,13 +1829,16 @@ def compile_node(node, level, assignable = 0):
             ret = compile_node(node.block, nlevel)
             if node.block.kind != kind.RET or not len(node.block.children):
                 if len(node.block.children) == 0:
-                    if (node.block.children[-1].tn.type, node.block.children[-1].tn.ptrl) == (sw_type.VOID):
+                    if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
                         out_writeln(f"ret {rlt(node.tn)}", nlevel)
                     else:
                         out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
 
                 elif not type_cmp(node.tn, node.block.children[-1].tn) and (node.tn.type, node.tn.ptrl) != (sw_type.VOID, 0):
-                    compiler_error(node.block.children[-1], f"return types don't match: function is of type '{hlt(node.tn)}' but '{hlt(node.block.children[-1].tn)}' was returned")
+                    if (node.block.children[-1].tn.type, node.block.children[-1].tn.ptrl) == (sw_type.VOID, 0):
+                        out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
+                    else:
+                        compiler_error(node.block.children[-1], f"return types don't match: function is of type '{hlt(node.tn)}' but '{hlt(node.block.children[-1].tn)}' was returned")
                 else:
                     if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
                         out_writeln("ret void", nlevel)

@@ -1,4 +1,5 @@
 extern ptr void fopen(ptr void, ptr char)
+extern ptr void fdopen(int, ptr char)
 extern int rewind(ptr void)
 extern int fseek(ptr void, int, int)
 extern int ftell(ptr void)
@@ -6,11 +7,21 @@ extern int fclose(ptr void)
 extern int fwrite(ptr char, int, int, ptr void)
 extern int fread(ptr void, int, int, ptr void)
 
+extern void write(int, ptr char, int)
+
 extern int strlen(ptr char)
 
 extern ptr void malloc(int)
 
 ptr void FAILED_TO_READ = 0
+
+int STDIN_FILENO = 0
+int STDOUT_FILENO = 1
+int STDERR_FILENO = 2
+
+# ptr void stdout = fdopen(STDOUT_FILENO, "w")
+# ptr void stdin = fdopen(STDIN_FILENO, "w")
+# ptr void stderr = fdopen(STDERR_FILENO, "w")
 
 int FAILED_TO_OPEN = -1
 int FAILED_TO_WRITE = -2
