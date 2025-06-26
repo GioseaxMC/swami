@@ -1309,7 +1309,7 @@ def type_cmp(type1, type2):
         return (type1.type, type1.ptrl) == (type2.type, type2.ptrl)
 
 def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, int, int]:
-    typecmp = bool(src_tn.ptrl) - bool(dest_tn.ptrl) # > 0 
+    typecmp = src_tn.isptr() - dest_tn.isptr() # > 0 
     isptr = src_tn.isptr() or dest_tn.isptr()
     bothp = src_tn.isptr() and dest_tn.isptr()
     if (src_tn.type, src_tn.ptrl) == (dest_tn.type, dest_tn.ptrl):
@@ -1367,6 +1367,8 @@ def both_ints(node1, node2):
 
 @compile_debug
 def compile_node(node, level, assignable = 0):
+    global iota_counter, current_namespace;
+
     check_global(node, level)
     nlevel = level+1
     arg_names = []
@@ -1541,10 +1543,9 @@ def compile_node(node, level, assignable = 0):
         case kind.OPERAND:
             if node.tkname() == "=":
                 src = compile_node(src_node, level)
-                if dest_node.kind == kind.WORD:
+                if dest_node.kind == kind.WORD and dest_node.tkname() not in current_namespace:
                     dest_node.tn = src_node.tn
                     dest_node.kind = kind.VARDECL
-                    print(hlt(src_node.tn))
                     add_usr_var(dest_node, level)
                     out_writeln(f"%{dest_node.tkname()} = alloca {rlt(dest_node.tn)}", level)
                     dest = f"%{dest_node.tkname()}"
@@ -1825,7 +1826,6 @@ def compile_node(node, level, assignable = 0):
             exit("Deprecated")
                     
         case kind.FUNCDECL:
-            global iota_counter, current_namespace;
             current_namespace = func_namespaces[node.tkname()]
             iota_counter = -1
             out_write(f"define {rlt(node.tn)} @{node.tkname()}(", level)
@@ -1910,6 +1910,20 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"loop.{branch_id}:", level)
             ret = compile_node(node.block, nlevel)
             out_writeln(f"br label %cond.{branch_id}", nlevel)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             out_writeln(f"done.{branch_id}:", level)
             return ret
         # purposelly: uncompilables - not compilable
