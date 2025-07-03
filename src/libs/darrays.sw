@@ -36,14 +36,15 @@ macro da_from_ptr(da, _ptr, _len) {
     (da).capacity = (_len);
     
     memcpy((da).items, _ptr, (_len)*sizeof(*_ptr));
+    da;
 }
 
 macro da_begin(da) { (da).items; }
 
 macro da_end(da) { cast cast (da).items as int + sizeof(*((da).items))*(da).length as ptr void; }
 
-macro foreach(da, _iter_t, _iter_n, body) {{
-    ptr _iter_t _iter_n = da_begin(da);
+macro foreach(da, _iter_n, body) {{
+    _iter_n = da_begin(da);
     while( cast _iter_n as int != cast da_end(da) as int ) {
         body;
         _iter_n = cast cast _iter_n as int + sizeof(*((da).items)) as ptr void;

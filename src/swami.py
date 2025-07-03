@@ -520,15 +520,20 @@ def add_usr_var(node, parse_indentation):
 
 class Manager:
     def __init__(self, items):
-        self.items = items
-        self.items.append(
-            (
-                items[-1][0],
-                items[-1][1],
-                items[-1][2] + len(items[-1][-1]),
-                "<EOT> -> end of tokens"
+        if len(items):
+            self.items = items
+            self.items.append(
+                (
+                    items[-1][0],
+                    items[-1][1],
+                    items[-1][2] + len(items[-1][-1]),
+                    "<EOT> -> end of tokens"
+                )
             )
-        )
+        else:
+            self.items = [
+                (0, 0, 0, "<EOT> -> end of tokens")
+            ]
         self.pointer = 0
         self.assumed = []
 
@@ -635,14 +640,14 @@ def print_node(node, indent = 0):
         print_node(node.block, nindent)
 
 def check_global(node, level):
-    not_global = kind.IF, kind.WHILE, kind.RET
+    not_global = kind.IF, kind.WHILE, kind.RET, kind.FUNCCALL
     _global = kind.FUNCDECL, kind.EXTERN, kind.STRUCT
     if level:
         if node.kind in _global:
-            compiler_error(node, "the '&t' instruction can only be used at a global level")
+            compiler_error(node, "instruction can only be used at a global level")
     else:
         if node.kind in not_global:
-            compiler_error(node, "the '&t' instruction cannot be used at a global (and so static) level")
+            compiler_error(node, "instruction cannot be used at a global (and so static) level")
 
 nodes = list()
 
@@ -1543,12 +1548,18 @@ def compile_node(node, level, assignable = 0):
         case kind.OPERAND:
             if node.tkname() == "=":
                 src = compile_node(src_node, level)
-                if dest_node.kind == kind.WORD and dest_node.tkname() not in current_namespace:
-                    dest_node.tn = src_node.tn
-                    dest_node.kind = kind.VARDECL
-                    add_usr_var(dest_node, level)
-                    out_writeln(f"%{dest_node.tkname()} = alloca {rlt(dest_node.tn)}", level)
-                    dest = f"%{dest_node.tkname()}"
+                if dest_node.kind == kind.WORD:
+                    if dest_node.tkname() not in current_namespace:
+                        dest_node.tn = src_node.tn
+                        dest_node.kind = kind.VARDECL
+                        add_usr_var(dest_node, level)
+                        out_writeln(f"%{dest_node.tkname()} = alloca {rlt(dest_node.tn)}", level)
+                        dest = f"%{dest_node.tkname()}"
+                    else:
+                        dest_node.tn = src_node.tn
+                        dest_node.kind = kind.VARREF
+                        
+                        dest = compile_node(dest_node, level, 1)
                 else:
                     dest = compile_node(dest_node, level, 1)
                 # debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
@@ -1910,20 +1921,6 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"loop.{branch_id}:", level)
             ret = compile_node(node.block, nlevel)
             out_writeln(f"br label %cond.{branch_id}", nlevel)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
             out_writeln(f"done.{branch_id}:", level)
             return ret
         # purposelly: uncompilables - not compilable
@@ -1936,6 +1933,8 @@ def compile_node(node, level, assignable = 0):
                 node.kind = kind.VARREF
                 node.tn = current_namespace[node.tkname()].tn
                 return compile_node(node, level, assignable)
+            compiler_error(node, "Unexpected unqualified token '&t' cannot be compiled")
+
         # case kind.NULL: # null nodes should not make it to the compilation stage
         #     ...
 
