@@ -74,7 +74,7 @@ func void parser_show_help(ptr Parser parser, ptr ParserArgs argv) {
 
     printf("  Arguments:\n");
     int atype;
-    foreach(*parser.names, ptr char, arg, {
+    foreach(*parser.names, arg, {
         atype = *parser.types.items[arg_idx];
         if (atype != BoolArg) {
         
@@ -90,7 +90,7 @@ func void parser_show_help(ptr Parser parser, ptr ParserArgs argv) {
     
     printf("\n  Options:\n");
     arg_idx = 0;
-    foreach(*parser.names, ptr char, arg, {
+    foreach(*parser.names, arg, {
         atype = *parser.types.items[arg_idx];
         if (atype == BoolArg) {
             printf("    %s : %s\n", *arg, *parser.descs.items[arg_idx]);
@@ -110,12 +110,12 @@ func ParserArgs args_as_da(int argc, ptr ptr char argv) {
 func void parse_args(ptr Parser _parser, ptr ParserArgs argv) {
     int is_flag;
     int flag_pos;
-    foreach(*argv, ptr char, arg, {
+    foreach(*argv, arg, {
         is_flag  = 0;
         flag_pos = 0;
 
         if (streq(*arg, "-h") || streq(*arg, "--help")) { parser_show_help(_parser, argv); exit(0); };
-        foreach(*_parser.names, ptr char, name, {
+        foreach(*_parser.names, name, {
             if (streq(*name, *arg)) {
                 is_flag = 1;
             } else if (!is_flag) {

@@ -16,7 +16,7 @@ func int main(int argc, ptr ptr char argv) {
         return 1;
     });
     
-    foreach(args, ptr char, arg, {
+    foreach(args, arg, {
         surl_fetch(*arg, ptr char buffer, {
             printf("Couldn't fetch url");
             return -1;

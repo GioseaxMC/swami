@@ -6,8 +6,8 @@ from colorama import Fore as f
 from pprint import pp
 from copy import copy
 argc = len(argv)
-
 import argparse
+
 
 cwd = Path(os.getcwd())
 libs = Path(os.path.realpath(__file__)).parent / "libs"
@@ -23,7 +23,12 @@ parser.add_argument('-o', help="The output file for both the .ll file and the ex
 parser.add_argument('-emit-llvm', action='store_true', help="Emit the generated llvm ir")
 parser.add_argument('-b', help="Custom flags directly passed to the backend", default="")
 
+import struct
+word_bytes = struct.calcsize("P")
+parser.add_argument('-word-size', help="The word size in bytes of the outputted binary", default=word_bytes)
 args = parser.parse_args()
+word_bytes = int(args.word_size)
+word_bits = word_bytes*8
 
 def rgb_text(r, g, b):
     return f"\033[38;2;{r};{g};{b}m"
@@ -52,6 +57,7 @@ class sw_type:
     PTR  = iota(1)
     INT  = iota()
     I32  = iota()
+    I64  = iota()
     VOID = iota()
     CHAR = iota()
     BOOL  = iota()
@@ -61,6 +67,7 @@ human_type = [
     "ptr",
     "int",
     "i32",
+    "i64",
     "void",
     "char",
     "bool",
@@ -69,8 +76,9 @@ human_type = [
 
 llvm_type = [
     "ptr",
-    "i64",
+    f"i{word_bits}",
     "i32",
+    "i64",
     "void",
     "i8",
     "i1",
@@ -78,7 +86,9 @@ llvm_type = [
 ]
 
 sizeof_type = [
-    8,
+    word_bytes,
+    word_bytes,
+    4,
     8,
     0,
     1,
@@ -666,12 +676,12 @@ def funcref_from_word(word: Node):
 def sizeof(tn: typenode): # in bytes please
     # debug({(type, ptrl)})
     if tn.isptr():
-        return 8
+        return word_bytes
     return sizeof_type[tn.type]
 
 def get_max_size(tn: typenode): # in bytes please
     if tn.isptr():
-        return 8
+        return word_bytes
     if tn.type > sw_type.ANY:
         structinfo = declared_structs[hlt(tn)]
         max_size = 0
@@ -1332,8 +1342,8 @@ def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str
     elif isptr:
         if typecmp > 0:
             if dest_tn.type == sw_type.BOOL:
-                out_writeln(f"%{iota()} = ptrtoint {rlt(src_tn)} {src} to i64", level)
-                out_writeln(f"%{iota()} = icmp ne i64 %{iota(-1)-1}, 0", level)
+                out_writeln(f"%{iota()} = ptrtoint {rlt(src_tn)} {src} to i{word_bits}", level)
+                out_writeln(f"%{iota()} = icmp ne i{word_bits} %{iota(-1)-1}, 0", level)
             else:
                 out_writeln(f"%{iota()} = ptrtoint {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
         else:
@@ -1423,7 +1433,7 @@ def compile_node(node, level, assignable = 0):
             USE_LEGACY_SIZEOF = 1
             if USE_LEGACY_SIZEOF:
                 out_writeln(f"%{iota()} = getelementptr {rlt(node.block.tn)}, {rlt(node.block.tn+1)} null, i32 1", level)
-                out_writeln(f"%{iota()} = ptrtoint {rlt(node.tn+1)} %{iota(-1)-1} to i64", level)
+                out_writeln(f"%{iota()} = ptrtoint {rlt(node.tn+1)} %{iota(-1)-1} to i{word_bits}", level)
                 return f"%{iota(-1)}"
             else:    
                 node.kind = kind.NUM_LIT
@@ -1453,7 +1463,7 @@ def compile_node(node, level, assignable = 0):
         case kind.UNARY:
             result = compile_node(node.block, level)
             if node.tkname() == "-":
-                node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl
+                node.tn = node.block.tn
                 if node.block.kind == kind.NUM_LIT:
                     node.kind = kind.NUM_LIT
                     result = "-"+result
@@ -1461,9 +1471,9 @@ def compile_node(node, level, assignable = 0):
                 else:
                     out_writeln(f"%{iota()} = sub {rlt(node.block.tn)} 0, {result}", level)
             elif node.tkname() == "!":
-                result = cast(result, node.block.tn, ftn(sw_type.INT, 0), level)[0]
-                out_writeln(f"%{iota()} = icmp eq i64 {result}, 0", level)
-                node.tn.type, node.tn.ptrl = sw_type.BOOL, 0
+                # result = cast(result, node.block.tn, ftn(sw_type.INT, 0), level)[0]
+                out_writeln(f"%{iota()} = icmp eq {rlt(node.block.tn)} {result}, 0", level)
+                node.tn = ftn(sw_type.BOOL, 0)
                 return f"%{iota(-1)}"
             else:
                 return result
@@ -1583,7 +1593,7 @@ def compile_node(node, level, assignable = 0):
                 src = compile_node(src_node, level)
                 if not dest_node.tn.ptrl:
                     compiler_error(dest_node, "Can only index into pointers")
-                out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.tn-1)}, ptr {dest}, i64 {src}", level)
+                out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.tn-1)}, ptr {dest}, {rlt(src_node.tn)} {src}", level)
                 if not assignable:
                     out_writeln(f"%{iota()} = load {rlt(dest_node.tn-1)}, ptr %{iota(-1)-1}", level)
                     node.tn.type, node.tn.ptrl = dest_node.tn.type, dest_node.tn.ptrl-1
@@ -1611,6 +1621,8 @@ def compile_node(node, level, assignable = 0):
                 struct_node = declared_structs[hlt(ftn(dest_node.tn.type, 0))]
                 field_id = struct_node.find_by_name(src_node.tkname(), src_node)
                 field_node = struct_node.children[field_id]
+                
+                debug(field_node.tkname(), hlt(field_node.tn))
 
                 if assignable or do_incdec:
                     # debug("[FIELD TYPE]:", hlt(field_node.tn))
@@ -1619,11 +1631,10 @@ def compile_node(node, level, assignable = 0):
                     inc_dest = f"%{iota(-1)}"
                     if not assignable:
                         out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}", level)
-                    node.tn = field_node.tn
                 else:
                     # out_writeln(f"%{iota()} = load {rlt(struct_node.tn.type, struct_node.tn.ptrl)}, ptr {dest}", level)
                     out_writeln(f"%{iota()} = extractvalue {rlt(struct_node.tn)} {dest}, {field_id}", level)
-                    node.tn = field_node.tn
+                node.tn = field_node.tn.copy()
 
                 ret_val = f"%{iota(-1)}"
 
@@ -1687,7 +1698,7 @@ def compile_node(node, level, assignable = 0):
                     arg_names.append(compile_node(arg, level))
                     # # debug("types for node:", node.tkname(), hlt(node.tn.type, node.tn.ptrl), hlt(arg.tn.type, arg.tn.ptrl))
                     if not idx:
-                        node.tn.ptrl, node.tn.type = arg.tn.ptrl, arg.tn.type # operand type is type of the first operand
+                        node.tn = arg.tn # operand type is type of the first operand
                 
                 if (src_node.tn.type, src_node.tn.ptrl) != (node.tn.type, node.tn.ptrl):
                     if src_node.tn.ptrl or node.tn.ptrl:

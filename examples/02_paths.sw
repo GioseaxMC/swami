@@ -9,7 +9,7 @@ func int main() {
 
     path_add(&path, "../.");
 
-    foreach(path, ptr char, p, {
+    foreach(path, p, {
         printf("%s/", *p);
     });
     
