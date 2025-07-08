@@ -51,6 +51,7 @@ def debug(*children, **kwchildren) -> None:
 class sw_type:
     PTR  = iota(1)
     INT  = iota()
+    I32  = iota()
     VOID = iota()
     CHAR = iota()
     BOOL  = iota()
@@ -59,6 +60,7 @@ class sw_type:
 human_type = [
     "ptr",
     "int",
+    "i32",
     "void",
     "char",
     "bool",
@@ -68,6 +70,7 @@ human_type = [
 llvm_type = [
     "ptr",
     "i64",
+    "i32",
     "void",
     "i8",
     "i1",
