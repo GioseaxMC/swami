@@ -1,4 +1,4 @@
-link "curl"
+param "-lcurl"
 
 extern ptr void curl_easy_init()
 extern int curl_global_init(int)

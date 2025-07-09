@@ -1,25 +1,22 @@
 include {
-    "stdlib.sw",
+    "flags.sw",
     "surl.sw",
-    "darrays.sw",
 }
 
-dynamic_array(ptr char, Args)
-
 func int main(int argc, ptr ptr char argv) {
-    da_make(Args, args);
+    args = args_as_da(argc, argv);
 
-    da_from_ptr(args, cast addptr(argv, 8) as ptr ptr char, argc-1);
-    
     surl_init({
         printf("Couldn't initialize surl\n");
         return 1;
     });
     
+    buffer = "";
+
     foreach(args, arg, {
-        surl_fetch(*arg, ptr char buffer, {
-            printf("Couldn't fetch url");
-            return -1;
+        if arg != args.items surl_fetch(*arg, buffer, {
+                printf("Couldn't fetch url");
+                return -1;
         });
         printf("%s", buffer);
     });

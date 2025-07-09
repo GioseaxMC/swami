@@ -28,6 +28,7 @@ word_bytes = struct.calcsize("P")
 parser.add_argument('-word-size', help="The word size in bytes of the outputted binary", default=word_bytes)
 args = parser.parse_args()
 word_bytes = int(args.word_size)
+print(word_bytes)
 word_bits = word_bytes*8
 
 def rgb_text(r, g, b):
@@ -496,7 +497,7 @@ human_kind = [
     "type",
     "function reference",
 
-    "linker",
+    "parameters",
     "reserve",
 
     "null",
@@ -506,7 +507,7 @@ func_namespaces: dict[dict[Node]] = {}
 global_vars: dict[Node] = {}
 macro_tokens: dict[list[tuple]] = {}
 
-declared_links: list[str] = []
+declared_params: list[str] = []
 declared_funcs: dict[Node] = {}
 declared_strings: list[str] = []
 declared_structs: dict = {}
@@ -1182,12 +1183,12 @@ def parse_primary():
             parser_error(node.token, "Redeclaration of variable '&t'")
 
         
-    elif token[-1] == "link":
+    elif token[-1] == "param":
         node.kind = kind.NULL
         node.val = tokens.consume()[-1]
-        if node.val not in declared_links:
-            declared_links.append(node.val)
-            args.b += f" -l{node.val[1:-1]}"
+        if node.val not in declared_params:
+            declared_params.append(node.val)
+            args.b += f" {node.val[1:-1]} "
     
     elif token[-1] == "error":
         msg = tokens.consume()[-1]
@@ -1283,8 +1284,7 @@ def parse_expression(importance): # <- wanted to write priority
     global parse_indentation; parse_indentation += 1
     node = parse_primary()
     # debug("parsing primary from expression parser:", node.tkname(), "current", tokens.current()[-1], "current importance", get_importance(tokens.current()), "importance", importance)
-    while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands: # or node.kind == kind.VARREF and tokens.current()[-1] == ".":
-        # debug("[parsing tk]", tokens.current())
+    while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands:
         op_token = tokens.consume()
         op_node = Node()
         op_node.token = op_token
@@ -1430,7 +1430,7 @@ def compile_node(node, level, assignable = 0):
             compile_node(node.block, level)
             node.tn.type = sw_type.INT
             node.tn.ptrl = 0
-            USE_LEGACY_SIZEOF = 1
+            USE_LEGACY_SIZEOF = 0
             if USE_LEGACY_SIZEOF:
                 out_writeln(f"%{iota()} = getelementptr {rlt(node.block.tn)}, {rlt(node.block.tn+1)} null, i32 1", level)
                 out_writeln(f"%{iota()} = ptrtoint {rlt(node.tn+1)} %{iota(-1)-1} to i{word_bits}", level)
@@ -1472,7 +1472,7 @@ def compile_node(node, level, assignable = 0):
                     out_writeln(f"%{iota()} = sub {rlt(node.block.tn)} 0, {result}", level)
             elif node.tkname() == "!":
                 # result = cast(result, node.block.tn, ftn(sw_type.INT, 0), level)[0]
-                out_writeln(f"%{iota()} = icmp eq {rlt(node.block.tn)} {result}, 0", level)
+                out_writeln(f"%{iota()} = icmp eq {rlt(node.block.tn)} {result}, {node.block.tn.get_zero()}", level)
                 node.tn = ftn(sw_type.BOOL, 0)
                 return f"%{iota(-1)}"
             else:
@@ -1698,7 +1698,7 @@ def compile_node(node, level, assignable = 0):
                     arg_names.append(compile_node(arg, level))
                     # # debug("types for node:", node.tkname(), hlt(node.tn.type, node.tn.ptrl), hlt(arg.tn.type, arg.tn.ptrl))
                     if not idx:
-                        node.tn = arg.tn # operand type is type of the first operand
+                        node.tn = arg.tn.copy() # operand type is type of the first operand
                 
                 if (src_node.tn.type, src_node.tn.ptrl) != (node.tn.type, node.tn.ptrl):
                     if src_node.tn.ptrl or node.tn.ptrl:
@@ -1788,7 +1788,7 @@ def compile_node(node, level, assignable = 0):
                         out_writeln(f"{lbl_end}:", level)
                         out_writeln(f"{result_var} = select i1 {lhs}, i1 {rhs_val}, i1 0", level)
 
-                        node.tn.type, node.tn.ptrl = sw_type.BOOL, 0
+                        node.tn = ftn(sw_type.BOOL, 0)
                         return result_var
 
 

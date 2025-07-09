@@ -1,5 +1,7 @@
 extern ptr void malloc(int)
 
+macro alloca(type) { cast malloc(sizeof(type)) as ptr type; }
+
 extern ptr void realloc(ptr void, int)
 
 extern void free(ptr void)
@@ -46,7 +48,7 @@ struct String {
     int capacity,
 }
 
-struct String_vec {
+struct StringVec {
     ptr String items,
     int length,
     int capacity,
@@ -77,7 +79,7 @@ func bool is_space(char letter) {
 }
 
 macro str_assert(cond, message) {
-    if (!cond) { printf("ASSERT: %s", message); exit(0-1); };
+    if (!(cond)) { printf("ASSERT: %s", message); exit(-1); };
 }
 
 func int next_powt(int len) {
@@ -258,16 +260,16 @@ func void str_replace(ptr String _str, ptr char _old, ptr char _new) {
     return;
 }
 
-func String_vec str_vec_init() {
-    String_vec made;
+func StringVec str_vec_init() {
+    StringVec made;
     made.length = 0;
     made.items = NULL;
     made.capacity = 0;
     return made;
 }
 
-func void str_vec_append(ptr String_vec _vec, String _str) {
-    String_vec vec = *_vec;
+func void str_vec_append(ptr StringVec _vec, String _str) {
+    StringVec vec = *_vec;
     if (vec.length+1 >= vec.capacity) {
         int old_cap = vec.capacity;
         vec.capacity = vec.capacity * 2;
@@ -285,8 +287,8 @@ func String str_copy(String _str) {
     return str_substr(_str, 0, _str.length);
 }
 
-func String_vec str_split(String _str, char c) {
-    String_vec vtemp = str_vec_init();
+func StringVec str_split(String _str, char c) {
+    StringVec vtemp = str_vec_init();
     int found = -1;
     String temp;
     int len = _str.length;
