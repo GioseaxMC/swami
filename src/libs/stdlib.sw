@@ -59,6 +59,11 @@ func int max(int a, int b) {
     return b;
 }
 
+func int min(int a, int b) {
+    if a < b return a;
+    return b;
+}
+
 macro _load(ptr) { ptr[0]; }
 
 macro op_ptr(p1, op, p2) { cast cast p1 as int op cast p2 as int as ptr void; }

@@ -19,7 +19,7 @@ parser.add_argument('-d', action='store_true', help="Enable # debug mode")
 
 parser.add_argument('sourcecode', help="The swami file")
 
-parser.add_argument('-o', help="The output file for both the .ll file and the executable", required=1)
+parser.add_argument('-o', help="The output file for both the .ll file and the executable", required=True)
 parser.add_argument('-emit-llvm', action='store_true', help="Emit the generated llvm ir")
 parser.add_argument('-b', help="Custom flags directly passed to the backend", default="")
 
@@ -329,10 +329,9 @@ class typenode:
         self.children = []
     
     def from_node(node):
-        tn = typenode()
-        tn.type, tn.ptrl, tn.outptrl, tn.token = node.tn.type, node.tn.ptrl, node.tn.outptrl, node.token
+        tn = node.tn.copy()
         for cc in node.children:
-            tn.children.append(cc.tn)
+            tn.children.append(cc.tn.copy())
         return tn
 
     def is_callable(self):
@@ -351,7 +350,7 @@ class typenode:
         new = typenode()
         new.type = self.type
         new.ptrl = self.ptrl
-        new.children = self.children
+        new.children = self.children.copy()
         return new
     
     def simple(self):
@@ -384,12 +383,13 @@ def ftn(t, p):
 
 class Node:
     def __init__(self):
-        self.token = None
-        self.val = -1
-        self.kind = -1
-        self.children = []
-        self.tn = typenode()
-        self.block = 0
+        self.token: tuple = None
+        self.string_val: str = ""
+        self.int_val: int = 0
+        self.kind: int = -1
+        self.children: list[Node] = []
+        self.tn: typenode = typenode()
+        self.block = None
         # self.name = ""
 
     def find_by_name(self, name, node):
@@ -457,6 +457,7 @@ class kind:
 
     LINK = iota()
     RESERVE = iota()
+    BREAK = iota()
 
     NULL = iota()
 
@@ -499,23 +500,25 @@ human_kind = [
 
     "parameters",
     "reserve",
+    "break",
 
     "null",
 ]
 
-func_namespaces: dict[dict[Node]] = {}
-global_vars: dict[Node] = {}
-macro_tokens: dict[list[tuple]] = {}
+func_namespaces: dict[str, dict[str, Node]] = {}
+global_vars: dict[str, Node] = {}
+macro_tokens: dict[str, list[tuple]] = {}
 
 declared_params: list[str] = []
-declared_funcs: dict[Node] = {}
+declared_funcs: dict[str, Node] = {}
 declared_strings: list[str] = []
 declared_structs: dict = {}
-declared_macros: dict[Node] = {}
+declared_macros: dict[str, Node] = {}
 
 current_namespace = global_vars
 
 macro_call_stack: list[Node] = []
+loop_stack: list[Node] = []
 
 def add_usr_var(node, parse_indentation):
     global global_vars, current_namespace
@@ -663,7 +666,7 @@ def check_global(node, level):
         if node.kind in not_global:
             compiler_error(node, "instruction cannot be used at a global (and so static) level")
 
-nodes = list()
+nodes: list[Node] = list()
 
 def funcref_from_word(word: Node):
     if word.tkname() in declared_funcs:
@@ -698,7 +701,7 @@ def parse():
             nodes.append(node)
 
 def parse_incdec():
-    node = 0
+    node: None | Node = None
     # debug("parsing incdec", tokens.current()[-1])
     if tokens.current()[-1] == "++":
         node = Node()
@@ -748,7 +751,6 @@ def parse_named_arg(closer):
     parse_type(node.tn)
     if node.tn.type != sw_type.ANY:
         node.token = tokens.consume()
-        node.name = node.tkname()
         if not tokenizable(node.tkname()):
             parser_error(node.token, "Invalid name for argument")
     else:
@@ -768,9 +770,8 @@ def parse_named_args(closer):
 def parse_untyped_arg(closer):
     node = Node()
     node.token = tokens.consume()
-    node.name = node.tkname()
     if not tokenizable(node.tkname()):
-        parser_error("Invalid name for argument")
+        parser_error(node.token, "Invalid name for argument")
     # debug("[NAMEDARG]:", node.tkname())
     if tokens.current()[-1] != closer:
         tokens.expect(",")
@@ -1036,8 +1037,8 @@ def parse_varref(node):
     node.tn = var_info.tn.copy()
     node.block = parse_incdec()
 
-included_files = []
-def parse_inclusion(node) -> list[Node]:
+included_files: list[str] = []
+def parse_inclusion(node) -> Node:
     global tokens, parse_indentation
     opener = tokens.consume()
 
@@ -1062,7 +1063,9 @@ def parse_inclusion(node) -> list[Node]:
             filepath = libs.joinpath(filepath_rel).__str__()
         
         if filepath in included_files:
-            parser_error(filepath_tk, "double inclusion, the first inclusion is the only one used", 0)
+            ...
+            # parser_error(filepath_tk, "double inclusion, the first inclusion is the only one used", 0)
+        
         else:
             included_files.append(filepath)
             og_tokens = tokens
@@ -1109,7 +1112,7 @@ def parse_primary():
         node.tn.type, node.tn.ptrl = sw_type.CHAR, 1
         if escaped_string not in declared_strings:
             declared_strings.append(llvm_escape(node.tkname()))
-        node.val = declared_strings.index(escaped_string)
+        node.int_val = declared_strings.index(escaped_string)
         
     elif token[-1] in human_unarys:
         # debug("[UNARYFOUND]")
@@ -1170,13 +1173,13 @@ def parse_primary():
     elif token[-1] == "reserve":
         node.kind = kind.RESERVE
         size_tk = tokens.consume()
-        node.val = size_tk[-1]
-        if not node.val.isnumeric():
+        node.string_val = size_tk[-1]
+        if not node.string_val.isnumeric():
             parser_error(size_tk, "Expected an integer literal, got '&t'")
         tokens.expect("as")
         node.token = tokens.consume()
         if not tokenizable(node.tkname()):
-            parser_error(node.tk, "'&t' is not a valid variable name")
+            parser_error(node.token, "'&t' is not a valid variable name")
         node.tn = ftn(sw_type.CHAR, 1)
         exists = add_usr_var(node, parse_indentation)
         if exists:
@@ -1185,10 +1188,10 @@ def parse_primary():
         
     elif token[-1] == "param":
         node.kind = kind.NULL
-        node.val = tokens.consume()[-1]
-        if node.val not in declared_params:
-            declared_params.append(node.val)
-            args.b += f" {node.val[1:-1]} "
+        node.string_val = tokens.consume()[-1]
+        if node.string_val not in declared_params:
+            declared_params.append(node.string_val)
+            args.b += f" {node.string_val[1:-1]} "
     
     elif token[-1] == "error":
         msg = tokens.consume()[-1]
@@ -1326,15 +1329,15 @@ def type_cmp(type1, type2):
                 return 0
         return (type1.type, type1.ptrl) == (type2.type, type2.ptrl)
 
-def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, int, int]:
+def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, typenode]:
     typecmp = src_tn.isptr() - dest_tn.isptr() # > 0 
     isptr = src_tn.isptr() or dest_tn.isptr()
     bothp = src_tn.isptr() and dest_tn.isptr()
     if (src_tn.type, src_tn.ptrl) == (dest_tn.type, dest_tn.ptrl):
         # debug("Not casting, cuz same")
-        return src, dest_tn.type, dest_tn.ptrl
+        return src, dest_tn
     if DEBUGGING:
-            out_writeln(f"; Casting from {rlt(src_tn)} to {rlt(dest_tn)}", level)
+        out_writeln(f"; Casting from {rlt(src_tn)} to {rlt(dest_tn)}", level)
             
     if bothp:
         out_writeln(f"%{iota()} = bitcast {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
@@ -1420,7 +1423,7 @@ def compile_node(node, level, assignable = 0):
             for arg in node.children:
                 ret = compile_node(arg, level, assignable)
                 node.tn.type, node.tn.ptrl = arg.tn.type, arg.tn.ptrl
-                if arg.kind == kind.RET:
+                if arg.kind in (kind.RET, kind.BREAK):
                     # debug("[BLOCK]->[RETURNING] -- kind = NULL")
                     node.kind = kind.RET
                     break
@@ -1443,7 +1446,7 @@ def compile_node(node, level, assignable = 0):
         case kind.STR_LIT:
             node.tn.type = sw_type.CHAR
             node.tn.ptrl = 1
-            return f"@str.{node.val}"
+            return f"@str.{node.int_val}"
 
         case kind.NUM_LIT:
             node.tn.type = sw_type.INT
@@ -1455,7 +1458,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.RESERVE:
             var = iota()
-            out_writeln(f"%{var} = alloca [{node.val} x i8]", level)
+            out_writeln(f"%{var} = alloca [{node.string_val} x i8]", level)
             out_writeln(f"%{node.tkname()} = alloca ptr", level)
             out_writeln(f"store ptr %{var}, ptr %{node.tkname()}", level)
             return f"%{node.tkname()}"
@@ -1584,8 +1587,6 @@ def compile_node(node, level, assignable = 0):
                     compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.tn)}' != '{hlt(src_node.tn)}'")
                 else:
                     out_writeln(f"store {rlt(dest_node.tn)} {src}, ptr {dest}", level) ## edited
-                if src_node.block and src_node.block.kind in (kind.INC, kind.DEC):
-                    incdec(node, src_node.kind, level)
                 return src
             
             elif node.tkname() == "[":
@@ -1668,8 +1669,9 @@ def compile_node(node, level, assignable = 0):
                         var_length = 1
                     
                 if not var_length and len(funcinfo.children) != len(src_node.children):
+                    debug(rlt(funcinfo))
                     compiler_error(dest_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}")
-                
+                    
                 for idx, arg in enumerate(src_node.children):
                     arg_names.append(compile_node(arg, level))
 
