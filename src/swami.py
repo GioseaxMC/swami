@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from sys import *
 from colorama import Fore as f
 from pprint import pp
-from copy import copy
+from copy import copy, deepcopy
+from platform import system
 argc = len(argv)
 import argparse
 
-
 cwd = Path(os.getcwd())
 libs = Path(os.path.realpath(__file__)).parent / "libs"
+os_name = system().lower()
 
 parser = argparse.ArgumentParser(description="Swami compiler:\n\tusage: <python> swami.py main.sw -o main")
 
@@ -42,8 +43,9 @@ def iota(reset: int = 0):
         iota_counter = 0
     return iota_counter
 
-parse_indentation = 0
 DEBUGGING = args.d
+
+parse_indentation = 0
 error_sum = 0
 
 def debug(*children, **kwchildren) -> None:
@@ -502,30 +504,33 @@ human_kind = [
     "null",
 ]
 
-func_namespaces: dict[str, dict[str, Node]] = {}
-global_vars: dict[str, Node] = {}
-macro_tokens: dict[str, list[tuple]] = {}
-
-declared_params: list[str] = []
-declared_funcs: dict[str, Node] = {}
-declared_strings: list[str] = []
-declared_structs: dict = {}
-declared_macros: dict[str, Node] = {}
-
-current_namespace = global_vars
+class compiler_state:
+    def __init__(self):
+        self.func_namespaces: dict[str, dict[str, Node]] = {}
+        self.global_vars: dict[str, Node] = {}
+        self.macro_tokens: dict[str, list[tuple]] = {}
+        
+        self.declared_params: list[str] = []
+        self.declared_funcs: dict[str, Node] = {}
+        self.declared_strings: list[str] = []
+        self.declared_structs: dict = {}
+        self.declared_macros: dict[str, Node] = {}
+        
+        self.current_namespace = self.global_vars
+state = compiler_state()
 
 macro_call_stack: list[Node] = []
 # func_call_stack: list[Node] = []
 loop_stack: list[int] = []
 
 def add_usr_var(node, parse_indentation):
-    global global_vars, current_namespace
+    global state
     if parse_indentation:
         # debug("[USINGNAMESPACE]: current_namespace for", node.tkname())
-        namespace = current_namespace
+        namespace = state.current_namespace
     else:
         # debug("[USINGNAMESPACE]: global_vars")
-        namespace = global_vars
+        namespace = state.global_vars
     exists = 0
     if node.tkname() in namespace:
         exists = 1
@@ -667,8 +672,8 @@ def check_global(node, level):
 nodes: list[Node] = list()
 
 def funcref_from_word(word: Node):
-    if word.tkname() in declared_funcs:
-        called = declared_funcs[word.tkname()]
+    if word.tkname() in state.declared_funcs:
+        called = state.declared_funcs[word.tkname()]
         word.tn = typenode.from_node(called)
         word.tn.outptrl+=1
         word.kind = kind.FUNCREF
@@ -685,7 +690,7 @@ def get_max_size(tn: typenode): # in bytes please
     if tn.isptr():
         return word_bytes
     if tn.type > sw_type.ANY:
-        structinfo = declared_structs[hlt(tn)]
+        structinfo = state.declared_structs[hlt(tn)]
         max_size = 0
         for child in structinfo.children:
             max_size = max(max_size, get_max_size(child.tn))
@@ -809,8 +814,8 @@ def parse_macro_decl():
     node.token = tokens.consume()
     tokens.expect("(")
     node.children = parse_untyped_args(")")
-    macro_tokens[node.tkname()] = parse_macro_tokens()
-    declared_macros[node.tkname()] = node
+    state.macro_tokens[node.tkname()] = parse_macro_tokens()
+    state.declared_macros[node.tkname()] = node
     return node
 
 def parse_macro_args():
@@ -854,11 +859,11 @@ def parse_macro_call():
             tokens.expect(",")
     tokens.expect(")")
 
-    if len(macro_args) != len(declared_macros[node.tkname()].children):
-        compiler_error(node, f"Expected {len(declared_macros[node.tkname()].children)} tokens but got {len(macro_args)}")
+    if len(macro_args) != len(state.declared_macros[node.tkname()].children):
+        compiler_error(node, f"Expected {len(state.declared_macros[node.tkname()].children)} tokens but got {len(macro_args)}")
 
-    current_macro_tks = macro_tokens[node.tkname()].copy() # memcopy or da_copy()
-    arg_names = [x.tkname() for x in declared_macros[node.tkname()].children]
+    current_macro_tks = state.macro_tokens[node.tkname()].copy() # memcopy or da_copy()
+    arg_names = [x.tkname() for x in state.declared_macros[node.tkname()].children]
     
 
     for idx, arg in enumerate(current_macro_tks):
@@ -914,7 +919,8 @@ def parse_block():
     block.token = tokens.current()
     block.kind = kind.BLOCK
     while tokens.current()[-1] != "}":
-        block.children.append(parse_expression(0))
+        if (node:=parse_expression(0)).kind != kind.NULL:
+            block.children.append(node)
         tokens.expect(";")
     tokens.expect("}")
     return block
@@ -927,9 +933,9 @@ def parse_funcdecl(node):
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid function name")
-    declared_funcs[node.tkname()] = node
-    func_namespaces[node.tkname()] = {}
-    current_namespace = func_namespaces[node.tkname()]
+    state.declared_funcs[node.tkname()] = node
+    state.func_namespaces[node.tkname()] = {}
+    state.current_namespace = state.func_namespaces[node.tkname()]
     # debug("[FUNCDESC]", node.tkname(), ":", hlt(node.tn))
     tokens.expect("(")
     parse_indentation += 1
@@ -938,7 +944,7 @@ def parse_funcdecl(node):
         add_usr_var(arg, parse_indentation)
     parse_indentation -= 1
     node.block = parse_block()
-    current_namespace = global_vars
+    state.current_namespace = state.global_vars
 
 def parse_funcall(node):
     while tokens.current()[-1] != ")":
@@ -950,7 +956,7 @@ def parse_funcall(node):
 
 def parse_funcref(node):
     # debug("[FUNCREF]:", node.tkname())
-    called = declared_funcs[node.tkname()]
+    called = state.declared_funcs[node.tkname()]
     node.tn = typenode.from_node(called)
     node.tn.outptrl+=1
 
@@ -971,10 +977,10 @@ def parse_unnamed_args(closer):
 def parse_extern(node):
     parse_type(node.tn)
     node.token = tokens.consume()
-    if node.tkname() in declared_funcs:
+    if node.tkname() in state.declared_funcs:
         node.kind = kind.NULL
     # debug("[EXTERN]: name:", node.tkname(), rlt(node.tn))
-    declared_funcs[node.tkname()] = node
+    state.declared_funcs[node.tkname()] = node
     tokens.expect("(")
     node.children = parse_unnamed_args(")")
     tokens.expect(")")
@@ -996,7 +1002,7 @@ def parse_struct(node):
     sizeof_type.append(size)
     node.tn.ptrl = 0
     node.tn.type = len(llvm_type)-1
-    declared_structs[node.tkname()] = node
+    state.declared_structs[node.tkname()] = node
 
 def parse_vardecl(node):
     node.token = tokens.consume()
@@ -1023,10 +1029,10 @@ def parse_vardecl(node):
 
 def parse_varref(node):
     debug(node.tkname())
-    if node.tkname() in current_namespace:
-        namespace = current_namespace
-    elif node.tkname() in global_vars:
-        namespace = global_vars
+    if node.tkname() in state.current_namespace:
+        namespace = state.current_namespace
+    elif node.tkname() in state.global_vars:
+        namespace = state.global_vars
     else: 
         parser_error(node.token, "'&t' is undeclared") # this should be unreachable but still
     
@@ -1096,6 +1102,8 @@ def parse_inclusion(node) -> Node:
     
 
 def parse_primary():
+    global state
+    
     token = tokens.consume()
     # debug(F"[PRIMARY]: '{token[-1]}'")
     node = Node()
@@ -1108,9 +1116,9 @@ def parse_primary():
         node.kind = kind.STR_LIT
         escaped_string = llvm_escape(node.tkname())
         node.tn.type, node.tn.ptrl = sw_type.CHAR, 1
-        if escaped_string not in declared_strings:
-            declared_strings.append(llvm_escape(node.tkname()))
-        node.int_val = declared_strings.index(escaped_string)
+        if escaped_string not in state.declared_strings:
+            state.declared_strings.append(llvm_escape(node.tkname()))
+        node.int_val = state.declared_strings.index(escaped_string)
         
     elif token[-1] in human_unarys:
         # debug("[UNARYFOUND]")
@@ -1136,6 +1144,16 @@ def parse_primary():
         node.kind = kind.REFPTR
         node.block = parse_primary()
         node.tn = node.block.tn.copy()
+    
+    elif token[-1] == "@":
+        systk = tokens.consume()
+        old_state = deepcopy(state)
+        print("next token after @: ", tokens.current()[-1])
+        node = parse_expression(0)
+        print("next token after @ parse: ", tokens.current()[-1])
+        if systk[-1] != os_name:
+            state = old_state
+            node.kind = kind.NULL
 
     elif token[-1] == "func":
         # assume_global(token)
@@ -1187,8 +1205,8 @@ def parse_primary():
     elif token[-1] == "param":
         node.kind = kind.NULL
         node.string_val = tokens.consume()[-1]
-        if node.string_val not in declared_params:
-            declared_params.append(node.string_val)
+        if node.string_val not in state.declared_params:
+            state.declared_params.append(node.string_val)
             args.b += f" {node.string_val[1:-1]} "
     
     elif token[-1] == "error":
@@ -1258,16 +1276,16 @@ def parse_primary():
         else:
             node.kind = kind.TYPE
 
-    elif token[-1] in current_namespace or token[-1] in global_vars:
+    elif token[-1] in state.current_namespace or token[-1] in state.global_vars:
         node.kind = kind.VARREF
         parse_varref(node)
 
-    elif token[-1] in declared_funcs:
+    elif token[-1] in state.declared_funcs:
         node.kind = kind.FUNCREF
         parse_funcref(node)
         
 
-    elif token[-1] in macro_tokens:
+    elif token[-1] in state.macro_tokens:
         node = parse_macro_call()
         node.kind = kind.BLOCK
         node.token = token
@@ -1524,12 +1542,12 @@ def compile_node(node, level, assignable = 0):
         case kind.VARREF:
             if assignable:
                 # node.tn.ptrl += 1
-                if node.tkname() in global_vars:
+                if node.tkname() in state.global_vars:
                     return f"@{node.tkname()}"
                 else:
                     return f"%{node.tkname()}"
             else:
-                if node.tkname() in global_vars:
+                if node.tkname() in state.global_vars:
                     out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)}  @{node.tkname()}", level)
                 else:
                     out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)} %{node.tkname()}", level)
@@ -1537,7 +1555,7 @@ def compile_node(node, level, assignable = 0):
                 ret_val = f"%{iota(-1)}"
                 
                 if node.block:
-                    if node.tkname() in global_vars:
+                    if node.tkname() in state.global_vars:
                         incdec(f"%{iota(-1)}", f"@{node.tkname()}", node.block.kind, node, level)
                     else:
                         incdec(f"%{iota(-1)}", f"%{node.tkname()}", node.block.kind, node, level)
@@ -1566,7 +1584,7 @@ def compile_node(node, level, assignable = 0):
             if node.tkname() == "=":
                 src = compile_node(src_node, level)
                 if dest_node.kind == kind.WORD:
-                    if dest_node.tkname() not in current_namespace:
+                    if dest_node.tkname() not in state.current_namespace:
                         dest_node.tn = src_node.tn
                         dest_node.kind = kind.VARDECL
                         add_usr_var(dest_node, level)
@@ -1620,7 +1638,7 @@ def compile_node(node, level, assignable = 0):
                     if assignable or do_incdec:
                         dest_node.tn.ptrl -= 1
 
-                struct_node = declared_structs[hlt(ftn(dest_node.tn.type, 0))]
+                struct_node = state.declared_structs[hlt(ftn(dest_node.tn.type, 0))]
                 field_id = struct_node.find_by_name(src_node.tkname(), src_node)
                 field_node = struct_node.children[field_id]
                 
@@ -1656,8 +1674,8 @@ def compile_node(node, level, assignable = 0):
                     to_call = "@llvm."+dest[1:]
                 else:
                     to_call = dest
-                if dest_node.tkname() in declared_funcs:
-                    funcinfo = typenode.from_node(declared_funcs[dest_node.tkname()])
+                if dest_node.tkname() in state.declared_funcs:
+                    funcinfo = typenode.from_node(state.declared_funcs[dest_node.tkname()])
                 elif dest_node.tn.is_callable():
                     funcinfo = dest_node.tn
                 else:
@@ -1857,7 +1875,7 @@ def compile_node(node, level, assignable = 0):
             exit("Deprecated")
                     
         case kind.FUNCDECL:
-            current_namespace = func_namespaces[node.tkname()]
+            state.current_namespace = state.func_namespaces[node.tkname()]
             # func_call_stack.append(node)
 
             iota_counter = -1
@@ -1966,11 +1984,11 @@ def compile_node(node, level, assignable = 0):
                 out_writeln("; '{node.tkname()}' macro declared here", level)
         
         case kind.WORD:
-            if node.tkname() in current_namespace:
+            if node.tkname() in state.current_namespace:
                 node.kind = kind.VARREF
-                node.tn = current_namespace[node.tkname()].tn
+                node.tn = state.current_namespace[node.tkname()].tn
                 return compile_node(node, level, assignable)
-            compiler_error(node, "Unexpected unqualified token '&t' cannot be compiled")
+            compiler_error(node, "Unexpected unqualified word '&t' cannot be compiled")
 
         # case kind.NULL: # null nodes should not make it to the compilation stage
         #     ...
@@ -1985,7 +2003,7 @@ def compile_nodes(nodes):
         compile_node(node, 0)
 
 iota(1)
-for string in declared_strings:
+for string in state.declared_strings:
     out_writeln(f"@str.{iota()-1} = global [{llvm_len(string)-1} x i8] c\"{string[1:-1]}\\00\"", 0)
 out_writeln("", 0)
 
