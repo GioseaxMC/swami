@@ -28,7 +28,6 @@ word_bytes = struct.calcsize("P")
 parser.add_argument('-word-size', help="The word size in bytes of the outputted binary", default=word_bytes)
 args = parser.parse_args()
 word_bytes = int(args.word_size)
-print(word_bytes)
 word_bits = word_bytes*8
 
 def rgb_text(r, g, b):
@@ -113,7 +112,6 @@ def rlt(tn):
     tpn += "*"*tn.outptrl
     return tpn
 
-
 def hlt(tn):
     tpn = f"{"ptr "*tn.ptrl}{human_type[tn.type]}"
     for idx, ntn in enumerate(tn.children):
@@ -155,7 +153,6 @@ class WindowPrint:
             print(self.color + VV + " " + f.RESET + string, end="")
             print(" "*(self.width-len(string)) + self.color + " " + VV)
         print(self.color+BL + HH*(self.width+2) + BR + f.RESET)
-
 
 def parser_error(token, prompt, errno = -1):
     global error_sum; error_sum += abs(errno)
@@ -323,7 +320,7 @@ def get_purified_tokens(file_contents, file_path):
 class typenode:
     def __init__(self):
         self.token = None
-        self.type = -1
+        self.type = sw_type.VOID
         self.ptrl = 0
         self.outptrl = 0
         self.children = []
@@ -518,7 +515,8 @@ declared_macros: dict[str, Node] = {}
 current_namespace = global_vars
 
 macro_call_stack: list[Node] = []
-loop_stack: list[Node] = []
+# func_call_stack: list[Node] = []
+loop_stack: list[int] = []
 
 def add_usr_var(node, parse_indentation):
     global global_vars, current_namespace
@@ -1228,6 +1226,9 @@ def parse_primary():
         node.children.append(parse_expression(0))
         node.block = parse_expression(0)
 
+    elif token[-1] == "break":
+        node.kind = kind.BREAK
+
     elif token[-1] == "macro":
         # if parse_indentation:
         #     parser_error(token, "macro statements can only be made at a global level")
@@ -1848,12 +1849,17 @@ def compile_node(node, level, assignable = 0):
             out_writeln(")\n", 0)
         
         case kind.FUNCREF:
+            # if assignable:
+            #    compiler_error(node, "Cannot return the pointer to a function pointer as it is considered an rvalue");
             return f"@{node.tkname()}"
+
         case kind.FUNCCALL:
             exit("Deprecated")
                     
         case kind.FUNCDECL:
             current_namespace = func_namespaces[node.tkname()]
+            # func_call_stack.append(node)
+
             iota_counter = -1
             out_write(f"define {rlt(node.tn)} @{node.tkname()}(", level)
             for idx, arg in enumerate(node.children):
@@ -1928,6 +1934,8 @@ def compile_node(node, level, assignable = 0):
 
         case kind.WHILE:
             branch_id = iota()
+            
+            loop_stack.append(branch_id)
 
             out_writeln(f"br label %cond.{branch_id}", level)
             out_writeln(f"cond.{branch_id}:", level)
@@ -1936,9 +1944,22 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"br i1 {condition}, label %loop.{branch_id}, label %done.{branch_id}", nlevel)
             out_writeln(f"loop.{branch_id}:", level)
             ret = compile_node(node.block, nlevel)
-            out_writeln(f"br label %cond.{branch_id}", nlevel)
+            # if node.block.kind != kind.RET:
+            
+            if len(loop_stack) and branch_id == loop_stack[-1]:
+                out_writeln(f"br label %cond.{branch_id}", nlevel)
+                loop_stack.pop()
+
             out_writeln(f"done.{branch_id}:", level)
+
             return ret
+    
+        case kind.BREAK:
+            if len(loop_stack):
+                out_writeln(f"br label %done.{loop_stack.pop()}", level); 
+            else:
+                compiler_error(node, "Cannot break out of nothing bruh");
+
         # purposelly: uncompilables - not compilable
         case kind.MACRODECL:
             if DEBUGGING:

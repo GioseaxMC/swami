@@ -1,7 +1,7 @@
 syntax keyword swamiType int char ptr <> bool void
 
 syntax match swamiNumber /\<\d\+\>/
-syntax keyword swamiKeyword TODO return func type struct if else while for foreach extern include macro cast as sizeof link error reserve
+syntax keyword swamiKeyword TODO return func type struct if else while for foreach extern include macro cast as sizeof param error reserve break
 syntax match swamiString /"\v([^"\\]|\\.)*"/ 
 syntax match swamiString /'\v([^'\\]|\\.)*'/
 syntax match swamiComment "#.*$"

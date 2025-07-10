@@ -1,3 +1,3 @@
-@echo off
+@echo on
 
-python src/swami.py %1.sw -o %* -b "-target x86_64-w64-mingw32" 
+python src/swami.py %*
