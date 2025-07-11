@@ -678,7 +678,7 @@ def funcref_from_word(word: Node):
         word.tn.outptrl+=1
         word.kind = kind.FUNCREF
         return word
-    compiler_error(word, "Cannot call unknown word '&t'")
+    compiler_error(word, "'&t' is not a declared function")
 
 def sizeof(tn: typenode): # in bytes please
     # debug({(type, ptrl)})
@@ -921,6 +921,7 @@ def parse_block():
     while tokens.current()[-1] != "}":
         if (node:=parse_expression(0)).kind != kind.NULL:
             block.children.append(node)
+        # if node.kind not in (kind.WHILE, kind.IF): # will break some code, will fix the code as i see it breaking
         tokens.expect(";")
     tokens.expect("}")
     return block
@@ -1148,9 +1149,7 @@ def parse_primary():
     elif token[-1] == "@":
         systk = tokens.consume()
         old_state = deepcopy(state)
-        print("next token after @: ", tokens.current()[-1])
         node = parse_expression(0)
-        print("next token after @ parse: ", tokens.current()[-1])
         if systk[-1] != os_name:
             state = old_state
             node.kind = kind.NULL
@@ -1221,12 +1220,10 @@ def parse_primary():
     elif token[-1] == "++":
         node.kind = kind.INC
         node.block = parse_expression(0)
-        # node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl
     
     elif token[-1] == "--":
         node.kind = kind.DEC
         node.block = parse_expression(0)
-        # node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl
 
     elif token[-1] == "if":
         # forbid_global(token)

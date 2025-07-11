@@ -9,6 +9,7 @@ extern void exit(int)
 
 extern int strlen(ptr char)
 extern void strcpy(ptr char, ptr char)
+extern ptr char strdup(ptr char)
 extern ptr char strstr(ptr char, ptr char)
 extern int strcmp(ptr char, ptr char)
 macro streq(sstr, ssstr) { strcmp(sstr, ssstr) == 0; }
