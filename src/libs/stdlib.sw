@@ -12,7 +12,10 @@ extern void strcpy(ptr char, ptr char)
 extern ptr char strdup(ptr char)
 extern ptr char strstr(ptr char, ptr char)
 extern int strcmp(ptr char, ptr char)
+extern bool isspace(char)
+extern bool isalnum(char)
 macro streq(sstr, ssstr) { strcmp(sstr, ssstr) == 0; }
+
 
 extern int vsnprintf(ptr void, ptr char, ptr char, ptr void)
 extern int snprintf(ptr void, ptr char, ptr char, <>)

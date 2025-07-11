@@ -5,12 +5,14 @@ include {
 
 
 
+
+
 struct Token {
     ptr char token,
     ptr char file,
     int token_len,
     int line,
-    int pos,
+    int row,
 }
 
 struct TokenList {
@@ -19,9 +21,6 @@ struct TokenList {
     int capacity,
     int index,
 }
-
-
-
 
 
 
@@ -44,7 +43,7 @@ func void add_token(ptr TokenList list, ptr char file, int line, int pos, ptr ch
     list.tokens[list.size].token_len = strlen(token);
     list.tokens[list.size].file = file;
     list.tokens[list.size].line = line;
-    list.tokens[list.size].pos = pos;
+    list.tokens[list.size].row = pos;
     *list.size++;
 }
 
@@ -83,6 +82,112 @@ func int tokenize_string_literal(ptr char str, ptr int pos, ptr int row, ptr cha
             ++(*pos);
         };
     };
+
+    if str[*pos] == quote {
+        token[i++] = *"\"";
+        token[i] = 0;
+        ++(*pos);
+        ++(*row);
+        return 1;
+    };
+
+    return 0;
 }
+
+func void tokenize(ptr char file, ptr TokenList list, ptr char filename) {
+    len = strlen(file);
+    line = 1; pos = 0; row = 1;
+    reserve 256 as token;
+
+    while pos < len {
+        if isspace(file[pos]) {
+            if (file[pos] == *"\n") {
+                line++;
+                row = 0;
+                add_token(list, filename, line-1, row, "__EOL__");
+            };
+            pos++;
+            row++;
+            continue;
+        };
+
+        if file[pos] == *"\"" || file[pos] == *"\'" {
+            start_row = row;
+            if (tokenize_string_literal(file, &pos, &row, token)) {
+                add_token(list, filename, line, start_row, token);
+                continue;
+            } else {
+                printf("Error: unmatched quote at %s:%zu:%zu\n", filename, line, pos);
+                break;
+            };
+        };
+
+        if isalnum(file[pos]) || file[pos] == *"_" {
+            start_pos = pos;
+            i = 0;
+            start_row = row;
+            while (isalnum(file[pos]) || file[pos] == *"_") {
+                token[i++] = file[pos];
+                pos++;
+                row++;
+            };
+            token[i] = 0;
+            add_token(list, filename, line, start_row, token);
+            continue;
+        } else {
+            start_pos = pos;
+            token[0] = file[pos];
+            token[1] = 0;
+            add_token(list, filename, line, row, token);
+            pos++;
+            row++;
+            continue;
+        };
+
+        printf("Error: unknown character '%c' at %s:%zu:%zu\n", file[pos], filename, line, pos);
+        pos++;
+        row++;
+    };
+    add_token(list, filename, line, 0, "__EOF__");
+}
+
+func Token current(ptr TokenList ls) {
+    return ls.tokens[ls.index];
+}
+
+func Token consume(ptr TokenList ls) {
+    return ls.tokens[*ls.index++];
+}
+
+func Token peek(ptr TokenList ls) {
+    return ls.tokens[ls.index+1];
+}
+
+func int more(ptr TokenList ls) {
+    return ls.size - ls.index;
+}
+
+func bool expect(ptr TokenList ls, ptr char goal) {
+    tk = consume(ls);
+    int match = streq(goal, tk.token);
+    if !match {
+        printf("ERROR: %s:%zu:%zu expected '%s' but got '%s'\n",
+            tk.file,
+            tk.row,
+            tk.line,
+            goal,
+            tk.token
+        );
+        # return 1;
+    };
+    return 0;
+}
+
+macro prepend_minus(str) {{
+    _len = strlen(str);
+    (str) = realloc((str), _len+2);
+    memmove((str)+1, (str), _len+1);
+    (str)[0] = *"-";
+};}
 
 func void main() {}

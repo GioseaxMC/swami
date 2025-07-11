@@ -312,7 +312,8 @@ def get_purified_tokens(file_contents, file_path):
             if not len(pr_stack):
                 parser_error(tk, "This parentesis was never opened")
             if pr_cmp[pr_stack[-1][-1]] != tk[-1]:
-                parser_error(pr_stack[-1], "Invalid parentesis pairing starting from here")
+                parser_error(pr_stack[-1], "Invalid parentesis pairing starting from here", 1)
+                parser_error(tk, "Invalid parentesis pairing ending here")
             else:
                 pr_stack.pop()
     if len(pr_stack):
@@ -400,6 +401,9 @@ class Node:
     def tkname(self):
         return self.token[-1]
 
+    def isterminator(self):
+        return self.kind in (kind.RET, kind.BREAK, kind.CONTINUE)
+
 OUTFILE_PATH = "./main.ll"
 INFILE_PATH = "./main.sw"
 
@@ -458,6 +462,8 @@ class kind:
     RESERVE = iota()
     BREAK = iota()
 
+    CONTINUE = iota()
+
     NULL = iota()
 
 human_kind = [
@@ -501,6 +507,8 @@ human_kind = [
     "reserve",
     "break",
 
+    "continue",
+
     "null",
 ]
 
@@ -520,7 +528,7 @@ class compiler_state:
 state = compiler_state()
 
 macro_call_stack: list[Node] = []
-# func_call_stack: list[Node] = []
+func_info_stack: list[typenode] = []
 loop_stack: list[int] = []
 
 def add_usr_var(node, parse_indentation):
@@ -1180,7 +1188,7 @@ def parse_primary():
         node.kind = kind.RET
         if tokens.current()[-1] != ";":
             # debug("[RETURN]: has children")
-            node.children.append(parse_expression(0))
+            node.block = (parse_expression(0))
         else:
             ...
             # debug("[RETURN]: no children")
@@ -1243,6 +1251,9 @@ def parse_primary():
 
     elif token[-1] == "break":
         node.kind = kind.BREAK
+
+    elif token[-1] == "continue":
+        node.kind = kind.CONTINUE
 
     elif token[-1] == "macro":
         # if parse_indentation:
@@ -1427,19 +1438,39 @@ def compile_node(node, level, assignable = 0):
             return f"{arg_names[-1]}"
 
         case kind.RET:
-            for arg in node.children:
-                argn = compile_node(arg, level)
-            if len(node.children):
-                out_writeln(f"ret {rlt(node.children[-1].tn)} {argn}", level)
+            if node.block:
+                ret = compile_node(node.block, level)
+            
+            node.tn = func_info_stack[-1].tn
+
+            # if len(node.children):
+            #     out_writeln(f"ret {rlt(node.children[-1].tn)} {argn}", level)
+            
+            # THIS SHOULD BE IT'S OWN FUNCTION WHEN IMPLEMENTING PROPER IR
+
+            if not node.block:
+                if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
+                    out_writeln(f"ret {rlt(node.tn)}", level)
+                else:
+                    out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", level)
+            
+            elif not type_cmp(node.tn, node.block.tn) and (node.tn.type, node.tn.ptrl) != (sw_type.VOID, 0):
+                if (node.block.tn.type, node.block.tn.ptrl) == (sw_type.VOID, 0):
+                    out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", level)
+                else:
+                    compiler_error(node.block, f"return types don't match: function is of type '{hlt(node.tn)}' but '{hlt(node.block.tn)}' was returned")
             else:
-                out_writeln("ret void", level)
+                if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
+                    out_writeln("ret void", nlevel)
+                else:
+                    out_writeln(f"ret {rlt(node.tn)} {ret}", level)
         
         case kind.BLOCK:
             ret = ""
             for arg in node.children:
                 ret = compile_node(arg, level, assignable)
                 node.tn.type, node.tn.ptrl = arg.tn.type, arg.tn.ptrl
-                if arg.kind in (kind.RET, kind.BREAK):
+                if arg.kind in (kind.RET, kind.BREAK, kind.CONTINUE):
                     # debug("[BLOCK]->[RETURNING] -- kind = NULL")
                     node.kind = kind.RET
                     break
@@ -1873,7 +1904,7 @@ def compile_node(node, level, assignable = 0):
                     
         case kind.FUNCDECL:
             state.current_namespace = state.func_namespaces[node.tkname()]
-            # func_call_stack.append(node)
+            func_info_stack.append(node)
 
             iota_counter = -1
             out_write(f"define {rlt(node.tn)} @{node.tkname()}(", level)
@@ -1898,7 +1929,7 @@ def compile_node(node, level, assignable = 0):
                         out_writeln(f"ret {rlt(node.tn)}", nlevel)
                     else:
                         out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
-
+                
                 elif not type_cmp(node.tn, node.block.children[-1].tn) and (node.tn.type, node.tn.ptrl) != (sw_type.VOID, 0):
                     if (node.block.children[-1].tn.type, node.block.children[-1].tn.ptrl) == (sw_type.VOID, 0):
                         out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
@@ -1909,6 +1940,7 @@ def compile_node(node, level, assignable = 0):
                         out_writeln("ret void", nlevel)
                     else:
                         out_writeln(f"ret {rlt(node.tn)} {ret}", nlevel)
+            func_info_stack.pop()
             out_writeln("}\n", 0)
         
         case kind.STRUCT:
@@ -1936,13 +1968,13 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"then.{branch_id}:", level)
             ret = compile_node(then_node, nlevel)
             if has_else:
-                if then_node.kind != kind.RET:
+                if not then_node.isterminator():
                     out_writeln(f"br label %done.{branch_id}", nlevel)
                 out_writeln(f"else.{branch_id}:", level)
                 ret = compile_node(else_node, nlevel)
                 then_node = else_node # this is so that even when this branch is not ran, the code can continue with the then_node
             # debug("[BLOCK]->[RETURNED] -- kind =", human_kind[then_node.kind])
-            if then_node.kind != kind.RET:
+            if not then_node.isterminator():
                 out_writeln(f"br label %done.{branch_id}", nlevel)
             out_writeln(f"done.{branch_id}:", level)
             return ret
@@ -1961,9 +1993,10 @@ def compile_node(node, level, assignable = 0):
             ret = compile_node(node.block, nlevel)
             # if node.block.kind != kind.RET:
             
-            if len(loop_stack) and branch_id == loop_stack[-1]:
-                out_writeln(f"br label %cond.{branch_id}", nlevel)
-                loop_stack.pop()
+            # if len(loop_stack) and branch_id == loop_stack[-1]:
+            loop_stack.pop()
+            out_writeln(f"br label %cond.{branch_id}", nlevel)
+
 
             out_writeln(f"done.{branch_id}:", level)
 
@@ -1971,9 +2004,15 @@ def compile_node(node, level, assignable = 0):
     
         case kind.BREAK:
             if len(loop_stack):
-                out_writeln(f"br label %done.{loop_stack.pop()}", level); 
+                out_writeln(f"br label %done.{loop_stack[-1]}", level); 
             else:
                 compiler_error(node, "Cannot break out of nothing bruh");
+
+        case kind.CONTINUE:
+            if len(loop_stack):
+                out_writeln(f"br label %cond.{loop_stack[-1]}", level); 
+            else:
+                compiler_error(node, "Cannot continue inside of nothing bruh");
 
         # purposelly: uncompilables - not compilable
         case kind.MACRODECL:
