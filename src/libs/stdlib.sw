@@ -12,8 +12,26 @@ extern void strcpy(ptr char, ptr char)
 extern ptr char strdup(ptr char)
 extern ptr char strstr(ptr char, ptr char)
 extern int strcmp(ptr char, ptr char)
-extern bool isspace(char)
-extern bool isalnum(char)
+# extern int isspace(char)
+# extern int isalnum(char)
+
+func bool isspace(char c) {
+    return (
+        c == 32    ||
+        c == 9     ||
+        c == 10    ||
+        c == 13
+    );
+}
+
+func bool isalnum(char c) {
+    return (
+        97 <= c && c <= 122 ||
+        65 <= c && c <= 90  ||
+        48 <= c && c <= 57
+    );
+}
+
 macro streq(sstr, ssstr) { strcmp(sstr, ssstr) == 0; }
 
 
@@ -31,7 +49,7 @@ macro for(decl, cond, inc, body) {{
 };}
 
 macro TODO(__random_shit) {
-    error "Not implemented yet."
+    panic "Not implemented yet."
 }
 
 macro salloc(size) {{

@@ -340,7 +340,9 @@ class typenode:
     def isptr(self):
         return self.ptrl or self.outptrl
     
-    def iscomplex(self):
+    def isstruct(self):
+        if self.isptr():
+            return 0
         return self.type > sw_type.ANY
 
     def get_zero(self):
@@ -627,6 +629,7 @@ def get_importance(token):
         
         ("|",),
         ("&",),
+
         ("||",),
         ("&&",),
 
@@ -637,6 +640,7 @@ def get_importance(token):
         ("==",),
         ("!=",),
         
+
         ("[",),
 
         ("+", "-"),
@@ -1216,7 +1220,7 @@ def parse_primary():
             state.declared_params.append(node.string_val)
             args.b += f" {node.string_val[1:-1]} "
     
-    elif token[-1] == "error":
+    elif token[-1] == "panic":
         msg = tokens.consume()[-1]
         if represents_string(msg):
             msg = msg[1:-1]
@@ -1356,7 +1360,7 @@ def type_cmp(type1, type2):
                 return 0
         return (type1.type, type1.ptrl) == (type2.type, type2.ptrl)
 
-def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, typenode]:
+def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, typenode]:
     typecmp = src_tn.isptr() - dest_tn.isptr() # > 0 
     isptr = src_tn.isptr() or dest_tn.isptr()
     bothp = src_tn.isptr() and dest_tn.isptr()
@@ -1391,7 +1395,7 @@ def cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str
                 out_writeln(f"%{iota()} = bitcast {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
     return f"%{iota(-1)}", dest_tn
 
-def incdec(value: str, destination: str, incdec_kind: int, node: Node, level: int) -> str:
+def compile_incdec(value: str, destination: str, incdec_kind: int, node: Node, level: int) -> str:
     out_writeln(f"; Invoked afterref {human_kind[incdec_kind]}", level)
     if incdec_kind == kind.INC:
         out_writeln(f"%{iota()} = add {rlt(node.tn)} {value}, 1", level)
@@ -1410,7 +1414,29 @@ def compile_debug(func):
         return ret
     return wrapper
 
-def both_ints(node1, node2):
+def compile_return(block, ret, level):
+    if not len(func_info_stack):
+        compiler_error(block, "Can only return inside functions");
+    funcinfo = func_info_stack[-1]
+    if not block:
+        if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
+            out_writeln(f"ret {rlt(funcinfo)}", level)
+        else:
+            out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
+    
+    elif not type_cmp(funcinfo, block.tn) and (funcinfo.type, funcinfo.ptrl) != (sw_type.VOID, 0) and (block.kind != kind.NUM_LIT): # NUM_LIT to adapt int literals to any int type 
+        if (block.tn.type, block.tn.ptrl) == (sw_type.VOID, 0):
+            out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
+        else:
+            compiler_error(block, f"return types don't match: function is of type '{hlt(funcinfo)}' but '{hlt(block.tn)}' was returned")
+    else:
+        if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
+            out_writeln("ret void", level)
+        else:
+            out_writeln(f"ret {rlt(funcinfo)} {ret}", level)
+
+
+def both_numlit(node1, node2):
     return node1.kind == kind.NUM_LIT and node2.kind == kind.NUM_LIT
 
 @compile_debug
@@ -1438,33 +1464,18 @@ def compile_node(node, level, assignable = 0):
             return f"{arg_names[-1]}"
 
         case kind.RET:
+            ret = "void"
+
             if node.block:
                 ret = compile_node(node.block, level)
             
-            node.tn = func_info_stack[-1].tn
-
             # if len(node.children):
             #     out_writeln(f"ret {rlt(node.children[-1].tn)} {argn}", level)
             
             # THIS SHOULD BE IT'S OWN FUNCTION WHEN IMPLEMENTING PROPER IR
-
-            if not node.block:
-                if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
-                    out_writeln(f"ret {rlt(node.tn)}", level)
-                else:
-                    out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", level)
             
-            elif not type_cmp(node.tn, node.block.tn) and (node.tn.type, node.tn.ptrl) != (sw_type.VOID, 0):
-                if (node.block.tn.type, node.block.tn.ptrl) == (sw_type.VOID, 0):
-                    out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", level)
-                else:
-                    compiler_error(node.block, f"return types don't match: function is of type '{hlt(node.tn)}' but '{hlt(node.block.tn)}' was returned")
-            else:
-                if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
-                    out_writeln("ret void", nlevel)
-                else:
-                    out_writeln(f"ret {rlt(node.tn)} {ret}", level)
-        
+            compile_return(node.block, ret, level)
+       
         case kind.BLOCK:
             ret = ""
             for arg in node.children:
@@ -1530,7 +1541,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.CAST:
             dest = compile_node(dest_node, level)
-            ret_val = cast(dest, dest_node.tn, src_node.tn, level)[0]
+            ret_val = compile_cast(dest, dest_node.tn, src_node.tn, level)[0]
             node.tn = src_node.tn.copy()
             return ret_val
 
@@ -1543,7 +1554,7 @@ def compile_node(node, level, assignable = 0):
                         out_writeln(f"store ptr {to_assign}, ptr %{node.tkname()}", level)
                     
                     elif node.block.kind != kind.NUM_LIT and (node.tn.type, node.tn.ptrl) != (node.block.tn.type, node.block.tn.ptrl):
-                        casted = cast(to_assign, node.block.tn, node.tn, level)[0]
+                        casted = compile_cast(to_assign, node.block.tn, node.tn, level)[0]
                         out_writeln(f"store {rlt(node.tn)} {casted}, ptr %{node.tkname()}", level)
                         # compiler_error(node, f"Types don't match in variable declaration '{hlt(node.tn.type, node.tn.ptrl)}' != '{hlt(node.block.tn.type, node.block.tn.ptrl)}'")
                     
@@ -1559,7 +1570,7 @@ def compile_node(node, level, assignable = 0):
                     argn = compile_node(node.block, level)
                     if node.tn.isptr():
                         out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} null", level)
-                    elif node.tn.iscomplex():
+                    elif node.tn.isstruct():
                         out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} zeroinitializer", level)
                     else:
                         out_writeln(f"@{node.tkname()} = global {rlt(node.tn)} {argn}", level)
@@ -1584,9 +1595,9 @@ def compile_node(node, level, assignable = 0):
                 
                 if node.block:
                     if node.tkname() in state.global_vars:
-                        incdec(f"%{iota(-1)}", f"@{node.tkname()}", node.block.kind, node, level)
+                        compile_incdec(f"%{iota(-1)}", f"@{node.tkname()}", node.block.kind, node, level)
                     else:
-                        incdec(f"%{iota(-1)}", f"%{node.tkname()}", node.block.kind, node, level)
+                        compile_incdec(f"%{iota(-1)}", f"%{node.tkname()}", node.block.kind, node, level)
                 
                 return ret_val
         
@@ -1639,14 +1650,14 @@ def compile_node(node, level, assignable = 0):
             elif node.tkname() == "[":
                 dest = compile_node(dest_node, level) # assignable
                 src = compile_node(src_node, level)
-                if not dest_node.tn.ptrl:
+                if not dest_node.tn.isptr():
                     compiler_error(dest_node, "Can only index into pointers")
                 out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.tn-1)}, ptr {dest}, {rlt(src_node.tn)} {src}", level)
                 if not assignable:
                     out_writeln(f"%{iota()} = load {rlt(dest_node.tn-1)}, ptr %{iota(-1)-1}", level)
-                    node.tn.type, node.tn.ptrl = dest_node.tn.type, dest_node.tn.ptrl-1
+                    node.tn = dest_node.tn-1
                 else:
-                    node.tn.type, node.tn.ptrl = dest_node.tn.type, dest_node.tn.ptrl-1
+                    node.tn = dest_node.tn-1
                 return f"%{iota(-1)}"
             
             elif node.tkname() == ".":
@@ -1665,7 +1676,9 @@ def compile_node(node, level, assignable = 0):
                     dest = f"%{iota(-1)}"
                     if assignable or do_incdec:
                         dest_node.tn.ptrl -= 1
-
+                
+                if not dest_node.tn.isstruct():
+                    compiler_error(node, "Can only extract field from structs");
                 struct_node = state.declared_structs[hlt(ftn(dest_node.tn.type, 0))]
                 field_id = struct_node.find_by_name(src_node.tkname(), src_node)
                 field_node = struct_node.children[field_id]
@@ -1689,7 +1702,7 @@ def compile_node(node, level, assignable = 0):
 
                 if do_incdec:
                     # debug("[FIELD SCR NODE]: compiling incdec", src_node.block)
-                    incdec(ret_val, f"%{iota(-1)-1}", src_node.block.kind, node, level)
+                    compile_incdec(ret_val, f"%{iota(-1)-1}", src_node.block.kind, node, level)
                 # debug("[NODE TYPE]:", hlt(node.tn))
                 return ret_val
 
@@ -1746,50 +1759,55 @@ def compile_node(node, level, assignable = 0):
                 for idx, arg in enumerate(node.children):
                     arg_names.append(compile_node(arg, level))
                     # # debug("types for node:", node.tkname(), hlt(node.tn.type, node.tn.ptrl), hlt(arg.tn.type, arg.tn.ptrl))
-                    if not idx:
-                        node.tn = arg.tn.copy() # operand type is type of the first operand
                 
-                if (src_node.tn.type, src_node.tn.ptrl) != (node.tn.type, node.tn.ptrl):
-                    if src_node.tn.ptrl or node.tn.ptrl:
+                if not type_cmp(src_node.tn, dest_node.tn):
+                    if src_node.tn.isptr() or dest_node.tn.isptr():
                         if node.tkname() in ("+","-","*","/","%"):
                             compiler_error(node, "cannot perform arithmetic operations on pointers, please cast to int, then back to pointers")
                         else:
-                            compiler_error(node, "cannot perform logic operations on pointers, please cast to int, then back to pointers")
-                    casted_src = cast(arg_names[1], src_node.tn, node.tn, level)[0]
+                            compiler_error(src_node, "cannot perform logic operations on pointers, please cast to int")
+                    else:
+                        if dest_node.kind == kind.NUM_LIT:
+                            node.tn = src_node.tn.copy()
+                        elif src_node.kind == kind.NUM_LIT:
+                            node.tn = dest_node.tn.copy()
+                        else:
+                            compiler_error(node, "Type mismatch");
                 else:
-                    casted_src = arg_names[1]
+                    node.tn = dest_node.tn.copy()
+                casted_src = arg_names[1]
 
                 match node.tkname():
                     case "+":
-                        if both_ints(dest_node, src_node):
+                        if both_numlit(dest_node, src_node):
                             node.kind = kind.NUM_LIT
                             node.token = (*node.token[:-1], str(int(dest_node.tkname()) + int(src_node.tkname())))
                             return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = add {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "-":
-                        if both_ints(dest_node, src_node):
+                        if both_numlit(dest_node, src_node):
                             node.kind = kind.NUM_LIT
                             node.token = (*node.token[:-1], str(int(dest_node.tkname()) - int(src_node.tkname())))
                             return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = sub {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "*":
-                        if both_ints(dest_node, src_node):
+                        if both_numlit(dest_node, src_node):
                             node.kind = kind.NUM_LIT
                             node.token = (*node.token[:-1], str(int(dest_node.tkname()) * int(src_node.tkname())))
                             return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = mul {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "/":
-                        if both_ints(dest_node, src_node):
+                        if both_numlit(dest_node, src_node):
                             node.kind = kind.NUM_LIT
                             node.token = (*node.token[:-1], str(int(dest_node.tkname()) // int(src_node.tkname())))
                             return f"{node.tkname()}"
                         out_writeln(f"%{iota()} = sdiv {rlt(node.tn)} {arg_names[0]}, {casted_src}", level)
                         return f"%{iota(-1)}"
                     case "%":
-                        if both_ints(dest_node, src_node):
+                        if both_numlit(dest_node, src_node):
                             node.kind = kind.NUM_LIT
                             node.token[-1] = str(int(dest_node.tkname()) % int(src_node.tkname()))
                             return f"{node.tkname()}"
@@ -1820,8 +1838,8 @@ def compile_node(node, level, assignable = 0):
                         return f"%{iota(-1)}"
 
                     case "&&":
-                        lhs = cast(arg_names[0], node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
-                        rhs = cast(arg_names[1], node.children[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        lhs = compile_cast(arg_names[0], node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        rhs = compile_cast(arg_names[1], node.children[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
                     
                         lbl_end = f"and_end_{iota()}"
                         lbl_rhs = f"and_rhs_{iota(-1)}"
@@ -1842,8 +1860,8 @@ def compile_node(node, level, assignable = 0):
 
 
                     case "||":
-                        lhs = cast(arg_names[0], node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
-                        rhs = cast(arg_names[1], node.children[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        lhs = compile_cast(arg_names[0], node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        rhs = compile_cast(arg_names[1], node.children[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
 
                         lbl_end = f"or_end_{iota()}"
                         lbl_rhs = f"or_rhs_{iota(-1)}"
@@ -1904,7 +1922,7 @@ def compile_node(node, level, assignable = 0):
                     
         case kind.FUNCDECL:
             state.current_namespace = state.func_namespaces[node.tkname()]
-            func_info_stack.append(node)
+            func_info_stack.append(node.tn)
 
             iota_counter = -1
             out_write(f"define {rlt(node.tn)} @{node.tkname()}(", level)
@@ -1922,24 +1940,11 @@ def compile_node(node, level, assignable = 0):
                     out_writeln(f"%{arg.tkname()} = alloca {rlt(arg.tn)}", nlevel)
                     out_writeln(f"store {rlt(arg.tn)} %{iota()}, ptr %{arg.tkname()}", nlevel)
             iota()
+
             ret = compile_node(node.block, nlevel)
-            if node.block.kind != kind.RET or not len(node.block.children):
-                if len(node.block.children) == 0:
-                    if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
-                        out_writeln(f"ret {rlt(node.tn)}", nlevel)
-                    else:
-                        out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
-                
-                elif not type_cmp(node.tn, node.block.children[-1].tn) and (node.tn.type, node.tn.ptrl) != (sw_type.VOID, 0):
-                    if (node.block.children[-1].tn.type, node.block.children[-1].tn.ptrl) == (sw_type.VOID, 0):
-                        out_writeln(f"ret {rlt(node.tn)} {node.tn.get_zero()}", nlevel)
-                    else:
-                        compiler_error(node.block.children[-1], f"return types don't match: function is of type '{hlt(node.tn)}' but '{hlt(node.block.children[-1].tn)}' was returned")
-                else:
-                    if (node.tn.type, node.tn.ptrl) == (sw_type.VOID, 0):
-                        out_writeln("ret void", nlevel)
-                    else:
-                        out_writeln(f"ret {rlt(node.tn)} {ret}", nlevel)
+            if not node.block.isterminator():
+                compile_return(node.block, ret, nlevel);
+
             func_info_stack.pop()
             out_writeln("}\n", 0)
         
@@ -1958,7 +1963,7 @@ def compile_node(node, level, assignable = 0):
             branch_id = iota()
             has_else = len(node.children) > 1
 
-            condition = cast(compiled_node, node.block.tn, ftn(sw_type.BOOL, 0), level)[0]
+            condition = compile_cast(compiled_node, node.block.tn, ftn(sw_type.BOOL, 0), level)[0]
             
             if has_else:
                 else_node = node.children[1]
@@ -1987,7 +1992,7 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"br label %cond.{branch_id}", level)
             out_writeln(f"cond.{branch_id}:", level)
             compiled_node = compile_node(node.children[0], nlevel)
-            condition = cast(compiled_node, node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+            condition = compile_cast(compiled_node, node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
             out_writeln(f"br i1 {condition}, label %loop.{branch_id}, label %done.{branch_id}", nlevel)
             out_writeln(f"loop.{branch_id}:", level)
             ret = compile_node(node.block, nlevel)

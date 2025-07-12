@@ -13,7 +13,6 @@ extern int strlen(ptr char)
 
 extern ptr void malloc(int)
 
-ptr void FAILED_TO_READ = 0
 
 int STDIN_FILENO = 0
 int STDOUT_FILENO = 1
@@ -23,9 +22,14 @@ int STDERR_FILENO = 2
 # ptr void stdin = fdopen(STDIN_FILENO, "w")
 # ptr void stderr = fdopen(STDERR_FILENO, "w")
 
+int OPEN_SUCCESS = 0
 int FAILED_TO_OPEN = -1
-int FAILED_TO_WRITE = -2
+
+int READ_SUCCESS = 0
+int FAILED_TO_READ = -2
+
 int WRITE_SUCCESS = 0
+int FAILED_TO_WRITE = -3
 
 func int write_file(ptr char filename, ptr char contents) {
     ptr void file = fopen(filename, "wb");
@@ -45,20 +49,42 @@ func int write_file(ptr char filename, ptr char contents) {
     return WRITE_SUCCESS;
 }
 
-func ptr char read_file(ptr char filename, ptr int size) {
+struct File {
+    ptr char contents,
+    ptr char filename,
+    int size,
+    int error,
+}
+
+func File read_file(ptr char filename) {
+    File ftemp;
+    ftemp.size = 0;
+    ftemp.contents = cast 0 as ptr void;
+    ftemp.error = 0;
+    ftemp.filename = filename;
+
+    int size = 0;
     ptr void file = fopen(filename, "rb");
-    if (!file) return cast 0 as ptr void;
+    if !file {
+        ftemp.error = FAILED_TO_OPEN;
+        return ftemp;
+    };
 
     fseek(file, 0, 2);
-    size[0] = ftell(file);
+    size = ftell(file);
     rewind(file);
 
-    ptr char buffer = malloc(size[0]+1);
-    if !buffer { fclose(file); return cast 0 as ptr void; };
+    buffer = malloc(size+1);
+    if !buffer {
+        fclose(file);
+        ftemp.error = FAILED_TO_READ;
+    };
 
-    fread(buffer, 1, size[0], file);
-    buffer[size[0]] = 0;
+    fread(buffer, 1, size, file);
+    buffer[size] = 0;
+    
+    ftemp.contents = buffer;
 
     fclose(file);
-    return buffer;
+    return ftemp;
 }
