@@ -1,10 +1,7 @@
-include (
-    "etonizer.sw"
-)
-
 include {
     "stdlib.sw",
     "files.sw",
+    "etonizer.sw"
 }
 
 func void main() {
