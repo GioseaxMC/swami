@@ -17,8 +17,6 @@ include { "stdlib.sw" }
 
 func int main() {
     printf("Hello World!\n");
-
-    return 0;
 }
 ```
 ### Run:
@@ -30,8 +28,10 @@ Hello World!
 ```
 ### Simple cat implementation: cat.sw
 ```rs
-include { "stdlib.sw" }
-include { "files.sw" }
+include {
+    "stdlib.sw",
+    "files.sw",
+}
 
 func int main(int argc, ptr ptr char argv) {
   
@@ -54,8 +54,6 @@ include { "stdlib.sw" }
 
 func int main() {
     printf("Hello World!\n");
-
-    return 0;
 }
 
 ```
