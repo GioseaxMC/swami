@@ -58,6 +58,7 @@ def debug(*children, **kwchildren) -> None:
 class sw_type:
     PTR  = iota(1)
     INT  = iota()
+    I16  = iota()
     I32  = iota()
     I64  = iota()
     VOID = iota()
@@ -68,6 +69,7 @@ class sw_type:
 human_type = [
     "ptr",
     "int",
+    "i16",
     "i32",
     "i64",
     "void",
@@ -79,6 +81,7 @@ human_type = [
 llvm_type = [
     "ptr",
     f"i{word_bits}",
+    "i16",
     "i32",
     "i64",
     "void",
@@ -90,6 +93,7 @@ llvm_type = [
 sizeof_type = [
     word_bytes,
     word_bytes,
+    2,
     4,
     8,
     0,
