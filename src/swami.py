@@ -99,7 +99,9 @@ sizeof_type = [
 ]
 
 def rlt(tn):
-    if (tn.ptrl or tn.outptrl) and tn.type==sw_type.VOID:
+    if not DEBUGGING and tn.type < 0:
+        compiler_error(node_stack.pop(), "Invalid type, this is a bug")
+    if tn.isptr() and tn.type==sw_type.VOID:
         return "ptr"
     else:
         tpn = f"{llvm_type[tn.type]+"*"*tn.ptrl}"
@@ -115,6 +117,8 @@ def rlt(tn):
     return tpn
 
 def hlt(tn):
+    if not DEBUGGING and tn.type < 0:
+        compiler_error(node_stack.pop(), "Invalid type, this is a bug")
     tpn = f"{"ptr "*tn.ptrl}{human_type[tn.type]}"
     for idx, ntn in enumerate(tn.children):
         if not idx:
@@ -328,6 +332,9 @@ class typenode:
         self.outptrl = 0
         self.children = []
     
+    def unknown(self):
+        return self.type == sw_type.VOID and not self.isptr()
+
     def from_node(node):
         tn = node.tn.copy()
         for cc in node.children:
@@ -350,8 +357,10 @@ class typenode:
     
     def copy(self):
         new = typenode()
+        new.token = self.token
         new.type = self.type
         new.ptrl = self.ptrl
+        new.outptrl = self.outptrl
         new.children = self.children.copy()
         return new
     
@@ -361,19 +370,33 @@ class typenode:
         new.ptrl = self.ptrl
         return new
 
+    def base(self):
+        new = self.copy()
+        new.ptrl = 0
+        new.outptrl = 0
+        return new
+
     def __add__(self, n):
         new = typenode()
         new.type = self.type
-        new.outptrl = self.outptrl
-        new.ptrl = self.ptrl+n
+        if self.outptrl:
+            new.outptrl = self.outptrl+n
+            new.ptrl = self.ptrl
+        else:
+            new.outptrl = self.outptrl
+            new.ptrl = self.ptrl+n
         new.children = self.children
         return new
 
     def __sub__(self, n):
         new = typenode()
         new.type = self.type
-        new.ptrl = self.ptrl-n
-        new.outptrl = self.outptrl
+        if self.outptrl:
+            new.outptrl = self.output-n
+            new.ptrl = self.ptrl
+        else:
+            new.ptrl = self.ptrl-n
+            new.outptrl = self.outptrl
         new.children = self.children
         return new
 
@@ -465,6 +488,7 @@ class kind:
     BREAK = iota()
 
     CONTINUE = iota()
+    STRUCTFIELD = iota()
 
     NULL = iota()
 
@@ -482,7 +506,7 @@ human_kind = [
     "return",
     
     "variable declaration",
-    "varriable reference",
+    "variable reference",
     "increment",
     
     "decrement",
@@ -509,7 +533,8 @@ human_kind = [
     "reserve",
     "break",
 
-    "continue",
+    "continue"
+    "struct field",
 
     "null",
 ]
@@ -529,6 +554,7 @@ class compiler_state:
         self.current_namespace = self.global_vars
 state = compiler_state()
 
+node_stack: list[Node] = []
 macro_call_stack: list[Node] = []
 func_info_stack: list[typenode] = []
 loop_stack: list[int] = []
@@ -536,10 +562,8 @@ loop_stack: list[int] = []
 def add_usr_var(node, parse_indentation):
     global state
     if parse_indentation:
-        # debug("[USINGNAMESPACE]: current_namespace for", node.tkname())
         namespace = state.current_namespace
     else:
-        # debug("[USINGNAMESPACE]: global_vars")
         namespace = state.global_vars
     exists = 0
     if node.tkname() in namespace:
@@ -693,7 +717,6 @@ def funcref_from_word(word: Node):
     compiler_error(word, "'&t' is not a declared function")
 
 def sizeof(tn: typenode): # in bytes please
-    # debug({(type, ptrl)})
     if tn.isptr():
         return word_bytes
     return sizeof_type[tn.type]
@@ -717,7 +740,6 @@ def parse():
 
 def parse_incdec():
     node: None | Node = None
-    # debug("parsing incdec", tokens.current()[-1])
     if tokens.current()[-1] == "++":
         node = Node()
         node.token = tokens.consume()
@@ -745,9 +767,7 @@ def parse_type_base(ptrl):
 def parse_type(tn):
     tn.token = tokens.current()
     tn.type, tn.ptrl = parse_type_base(0)
-    # debug("[AFTER TPARSE]:", tokens.current()[-1])
     tn.outptrl = 0
-    # debug("[]", tokens.current()[-1])
     if tokens.current()[-1] == "(":
         tokens.consume()
         while tokens.current()[-1] != ")":
@@ -770,7 +790,6 @@ def parse_named_arg(closer):
             parser_error(node.token, "Invalid name for argument")
     else:
         node.token = tokens.current()
-    # debug("[NAMEDARG]:", node.tkname())
     if tokens.current()[-1] != closer:
         tokens.expect(",")
     return node
@@ -787,7 +806,6 @@ def parse_untyped_arg(closer):
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid name for argument")
-    # debug("[NAMEDARG]:", node.tkname())
     if tokens.current()[-1] != closer:
         tokens.expect(",")
     return node
@@ -804,11 +822,9 @@ def parse_macro_tokens():
     macro_parsing_level = 0
     m_parsing = 1
     tokens.expect("{")
-    # debug("starting macro tokens parsing from", tokens.current())
     while m_parsing:
         token = tokens.consume()
         tkname = token[-1]
-        # debug("[MACRO]: parsing", tkname)
         if tkname == "{":
             macro_parsing_level+=1
         if tkname == "}":
@@ -837,7 +853,6 @@ def parse_macro_args():
     while running:
         token = tokens.consume()
         tkname = token[-1]
-        # debug("[MACROARG]: parsing", tkname, "with indentation", m_level)
         if tkname in ("(", "{", "["): # check for macro related bugs
             m_level+=1
         if tkname in (")", "}", "]"):
@@ -864,9 +879,7 @@ def parse_macro_call():
     macro_args = []
     tokens.expect("(")
     while tokens.current()[-1] != ")":
-        # debug("macro-token-before:", tokens.current()[-1])
         macro_args.append(parse_macro_args())
-        # debug("macro-token-after:", tokens.current()[-1])
         if tokens.current()[-1] != ")":
             tokens.expect(",")
     tokens.expect(")")
@@ -879,13 +892,10 @@ def parse_macro_call():
     
 
     for idx, arg in enumerate(current_macro_tks):
-        # debug(idx, arg)
         if arg[-1] in arg_names:
             arg_idx = arg_names.index(arg[-1])
             current_macro_tks.pop(idx)
-            # debug(macro_args)
             for tki, tk in enumerate(macro_args[arg_idx]):
-                # debug("--", idx, tk)
                 current_macro_tks.insert(idx+tki, tk)
 
     og_tokens = tokens
@@ -893,9 +903,7 @@ def parse_macro_call():
     if DEBUGGING:
         for tk in current_macro_tks:
             ...
-            # debug("..", tk)
     
-    debug("macro_tokens:", node.tkname())
     idx = 0
     while idx<len(current_macro_tks):
         if current_macro_tks[idx][-1] == "@":
@@ -905,20 +913,18 @@ def parse_macro_call():
             left = (*left[::-1], left[-1]+right[-1])
             current_macro_tks.insert(idx-1, left)
         else:
-            debug(current_macro_tks[idx])
             idx+=1
 
     tokens = Manager(current_macro_tks)
 
-    # debug("starting macro manager from:", tokens.current())
     old_pi = parse_indentation
     parse_indentation = -1
     while tokens.more():
 
-        # debug("parsing macro_body:", tokens.current())
         node.children.append(parse_expression(0))
         tokens.expect(";")
-        
+    
+    node.tn = node.children[-1].tn
     parse_indentation = old_pi
 
     tokens = og_tokens
@@ -932,10 +938,14 @@ def parse_block():
     block.kind = kind.BLOCK
     while tokens.current()[-1] != "}":
         if (node:=parse_expression(0)).kind != kind.NULL:
+            if node.kind == kind.WORD:
+                parser_error(node.token, "Unexpected word '&t'")
             block.children.append(node)
+        
         # if node.kind not in (kind.WHILE, kind.IF): # will break some code, will fix the code as i see it breaking
         tokens.expect(";")
     tokens.expect("}")
+    block.tn = block.children[-1].tn.copy()
     return block
     
 def parse_funcdecl(node):
@@ -949,7 +959,6 @@ def parse_funcdecl(node):
     state.declared_funcs[node.tkname()] = node
     state.func_namespaces[node.tkname()] = {}
     state.current_namespace = state.func_namespaces[node.tkname()]
-    # debug("[FUNCDESC]", node.tkname(), ":", hlt(node.tn))
     tokens.expect("(")
     parse_indentation += 1
     node.children = parse_named_args(")")
@@ -968,7 +977,6 @@ def parse_funcall(node):
     return node    
 
 def parse_funcref(node):
-    # debug("[FUNCREF]:", node.tkname())
     called = state.declared_funcs[node.tkname()]
     node.tn = typenode.from_node(called)
     node.tn.outptrl+=1
@@ -992,7 +1000,6 @@ def parse_extern(node):
     node.token = tokens.consume()
     if node.tkname() in state.declared_funcs:
         node.kind = kind.NULL
-    # debug("[EXTERN]: name:", node.tkname(), rlt(node.tn))
     state.declared_funcs[node.tkname()] = node
     tokens.expect("(")
     node.children = parse_unnamed_args(")")
@@ -1000,7 +1007,6 @@ def parse_extern(node):
 
 def parse_struct(node):
     node.token = tokens.consume()
-    # debug(f"[STRUCT]: {node.tkname()}")
     human_type.append(node.tkname())
     llvm_type.append(f"%struct.{node.tkname()}")
     tokens.expect("{")
@@ -1024,13 +1030,12 @@ def parse_vardecl(node):
     exists = add_usr_var(node, parse_indentation)
     if exists:
         node.kind = kind.VARREF
-    # debug("[VARDECL]:", node.tkname())
-    if tokens.current()[-1] == "=":
-        if not exists:
+    if tokens.current()[-1] == "=" and not parse_indentation:
+        if not exists: # makes redeclarations work as references
             tokens.consume()
-            # debug("[PARSING DECLASS]:", tokens.current()[-1])
             node.block = parse_expression(0)
         else:
+            parser_error(node.token, "Redeclaration of global variable '&t'")
             op_node = Node()
             op_node.token = tokens.consume()
             op_node.kind = kind.OPERAND
@@ -1041,16 +1046,14 @@ def parse_vardecl(node):
     # tokens.expect(";")
 
 def parse_varref(node):
-    debug(node.tkname())
     if node.tkname() in state.current_namespace:
         namespace = state.current_namespace
     elif node.tkname() in state.global_vars:
         namespace = state.global_vars
     else: 
-        parser_error(node.token, "'&t' is undeclared") # this should be unreachable but still
+        parser_error(node.token, "'&t' is undeclared, this is may an internal bug") # this should be unreachable but still
     
     var_info = namespace[node.tkname()]
-    # debug("[VARREF]:", node.tkname())
     node.tn = var_info.tn.copy()
     node.block = parse_incdec()
 
@@ -1092,10 +1095,7 @@ def parse_inclusion(node) -> Node:
             except Exception as e:
                 parser_error(filepath_tk, f"failed to open file &t while trying to include - {e}")
             
-            # debug("READING SRCODE from:", contents)
-
             parsed_tokens = get_purified_tokens(contents, filepath)
-            # debug("[PARSEDTKS]:", [tk[-1] for tk in parsed_tokens])
             
             tokens = Manager(parsed_tokens)
             og_pi = parse_indentation
@@ -1118,7 +1118,7 @@ def parse_primary():
     global state
     
     token = tokens.consume()
-    # debug(F"[PRIMARY]: '{token[-1]}'")
+    debug(F"[PRIMARY]: '{token[-1]}'")
     node = Node()
     node.token = token
 
@@ -1134,13 +1134,13 @@ def parse_primary():
         node.int_val = state.declared_strings.index(escaped_string)
         
     elif token[-1] in human_unarys:
-        # debug("[UNARYFOUND]")
         node.kind = kind.UNARY
         node.block = parse_primary()
         
     elif token[-1] == "(":
         node.kind = kind.EXPRESSION
         node.children.append(parse_expression(0))
+        node.tn = node.children[-1].tn.copy()
         tokens.expect(")")
     
     elif token[-1] == "{":
@@ -1191,11 +1191,9 @@ def parse_primary():
         # forbid_global(token)
         node.kind = kind.RET
         if tokens.current()[-1] != ";":
-            # debug("[RETURN]: has children")
             node.block = (parse_expression(0))
         else:
             ...
-            # debug("[RETURN]: no children")
     
     elif token[-1] == "reserve":
         node.kind = kind.RESERVE
@@ -1282,7 +1280,6 @@ def parse_primary():
         node.kind = kind.VARDECL
         tokens.goback() # no one will see this...
         parse_type(node.tn)
-        # debug("[AFTER VARDECL]:", tokens.current()[-1])
         if uisalnum(tokens.current()[-1]):
             node = parse_vardecl(node)
         else:
@@ -1317,23 +1314,35 @@ def parse_primary():
 def parse_expression(importance): # <- wanted to write priority
     global parse_indentation; parse_indentation += 1
     node = parse_primary()
-    # debug("parsing primary from expression parser:", node.tkname(), "current", tokens.current()[-1], "current importance", get_importance(tokens.current()), "importance", importance)
     while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands:
         op_token = tokens.consume()
         op_node = Node()
         op_node.token = op_token
         op_node.kind = kind.OPERAND
         op_node.children.append(node)
-        op_node.tn.type, op_node.tn.ptrl = node.tn.type, node.tn.ptrl
-        if op_token[-1] == "[":
-            right_node = parse_expression(0)
-            tokens.expect("]")
-        elif op_token[-1] == "(":
-            right_node = Node()
-            right_node.token = tokens.current()
-            parse_funcall(right_node)
-        else:
-            right_node = parse_expression(get_importance(op_token))
+        op_node.tn = node.tn.simple()
+        match op_token[-1]:
+            case "[":
+                right_node = parse_expression(0)
+                tokens.expect("]")
+            case "(":
+                right_node = Node()
+                right_node.token = tokens.current()
+                parse_funcall(right_node)
+            case "=":
+                right_node = parse_expression(get_importance(op_token))
+                if node.kind == kind.WORD:
+                    node.kind = kind.VARDECL
+                    add_usr_var(node, parse_indentation)
+            case ".":
+                right_node = parse_expression(get_importance(op_token))
+                if right_node.kind in (kind.WORD, kind.VARREF):
+                    right_node.kind = kind.STRUCTFIELD
+                else:
+                    parser_error(right_node.token, "Expected a struct field");
+
+            case _:
+                right_node = parse_expression(get_importance(op_token))
         op_node.children.append(right_node)
         node = op_node
     
@@ -1365,7 +1374,6 @@ def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> t
     isptr = src_tn.isptr() or dest_tn.isptr()
     bothp = src_tn.isptr() and dest_tn.isptr()
     if (src_tn.type, src_tn.ptrl) == (dest_tn.type, dest_tn.ptrl):
-        # debug("Not casting, cuz same")
         return src, dest_tn
     if DEBUGGING:
         out_writeln(f"; Casting from {rlt(src_tn)} to {rlt(dest_tn)}", level)
@@ -1409,6 +1417,7 @@ def compile_incdec(value: str, destination: str, incdec_kind: int, node: Node, l
 def compile_debug(func):
     def wrapper(*children, **kwchildren):
         ret = func(*children, *kwchildren)
+        node_stack.pop()
         if DEBUGGING:
             out_writeln(f"; compiled node with kind: {human_kind[children[0].kind]} :: {rlt(children[0].tn)} :: name {children[0].tkname()}", children[1])
         return ret
@@ -1424,13 +1433,16 @@ def compile_return(block, ret, level):
         else:
             out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
     
-    elif not type_cmp(funcinfo, block.tn) and (funcinfo.type, funcinfo.ptrl) != (sw_type.VOID, 0) and (block.kind != kind.NUM_LIT): # NUM_LIT to adapt int literals to any int type 
-        if (block.tn.type, block.tn.ptrl) == (sw_type.VOID, 0):
-            out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
+    elif not type_cmp(funcinfo, block.tn) and not funcinfo.unknown() and (block.kind != kind.NUM_LIT): # NUM_LIT to adapt int literals to any int type 
+        if block.tn.unknown():
+            if funcinfo.isstruct():
+                compiler_error(block, f"No return present in non void function, cannot default to 0")
+            else:
+                out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
         else:
             compiler_error(block, f"return types don't match: function is of type '{hlt(funcinfo)}' but '{hlt(block.tn)}' was returned")
     else:
-        if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
+        if funcinfo.unknown():
             out_writeln("ret void", level)
         else:
             out_writeln(f"ret {rlt(funcinfo)} {ret}", level)
@@ -1442,11 +1454,11 @@ def both_numlit(node1, node2):
 @compile_debug
 def compile_node(node, level, assignable = 0):
     global iota_counter, current_namespace;
-
+    node_stack.append(node)
     check_global(node, level)
     nlevel = level+1
     arg_names = []
-    # debug("[COMPILING]:", human_kind[node.kind], "||",)
+    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), "||",)
 
     if len(node.children) > 1:
         dest_node = node.children[0]
@@ -1473,7 +1485,6 @@ def compile_node(node, level, assignable = 0):
             #     out_writeln(f"ret {rlt(node.children[-1].tn)} {argn}", level)
             
             # THIS SHOULD BE IT'S OWN FUNCTION WHEN IMPLEMENTING PROPER IR
-            
             compile_return(node.block, ret, level)
        
         case kind.BLOCK:
@@ -1482,7 +1493,6 @@ def compile_node(node, level, assignable = 0):
                 ret = compile_node(arg, level, assignable)
                 node.tn.type, node.tn.ptrl = arg.tn.type, arg.tn.ptrl
                 if arg.kind in (kind.RET, kind.BREAK, kind.CONTINUE):
-                    # debug("[BLOCK]->[RETURNING] -- kind = NULL")
                     node.kind = kind.RET
                     break
             return ret
@@ -1502,7 +1512,7 @@ def compile_node(node, level, assignable = 0):
                 return f"{sizeof(node.block.tn)}"
 
         case kind.STR_LIT:
-            node.tn.type = sw_type.CHAR
+            # node.tn.type = sw_type.CHAR
             node.tn.ptrl = 1
             return f"@str.{node.int_val}"
 
@@ -1582,29 +1592,32 @@ def compile_node(node, level, assignable = 0):
             if assignable:
                 # node.tn.ptrl += 1
                 if node.tkname() in state.global_vars:
-                    return f"@{node.tkname()}"
+                    ret_val = f"@{node.tkname()}"
                 else:
-                    return f"%{node.tkname()}"
+                    if node.tn.unknown():
+                        node.tn = state.current_namespace[node.tkname()].tn.copy()
+                    ret_val = f"%{node.tkname()}"
             else:
                 if node.tkname() in state.global_vars:
                     out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)}  @{node.tkname()}", level)
                 else:
+                    if node.tn.unknown():
+                        node.tn = state.current_namespace[node.tkname()].tn.copy()
                     out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)} %{node.tkname()}", level)
 
                 ret_val = f"%{iota(-1)}"
                 
-                if node.block:
-                    if node.tkname() in state.global_vars:
-                        compile_incdec(f"%{iota(-1)}", f"@{node.tkname()}", node.block.kind, node, level)
-                    else:
-                        compile_incdec(f"%{iota(-1)}", f"%{node.tkname()}", node.block.kind, node, level)
-                
-                return ret_val
+            if node.block:
+                if node.tkname() in state.global_vars:
+                    compile_incdec(f"%{iota(-1)}", f"@{node.tkname()}", node.block.kind, node, level)
+                else:
+                    compile_incdec(f"%{iota(-1)}", f"%{node.tkname()}", node.block.kind, node, level)
+            
+            return ret_val
         
         case kind.INC:
             dest = compile_node(node.block, level, 1)
             node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl-1
-            # debug("[INCR KIND]", human_kind[node.block.kind])
             out_writeln(f"%{iota()} = load {rlt(node.block.tn-1)}, ptr {dest}", level)
             out_writeln(f"%{iota()} = add {rlt(node.block.tn-1)} %{iota(-1)-1}, 1", level)
             out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
@@ -1613,7 +1626,6 @@ def compile_node(node, level, assignable = 0):
         case kind.DEC:
             dest = compile_node(node.block, level, 1)
             node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl-1
-            # debug("[DECR KIND]", human_kind[node.block.kind])
             out_writeln(f"%{iota()} = load {rlt(node.block.tn-1)}, ptr {dest}", level)
             out_writeln(f"%{iota()} = sub {rlt(node.block-1)} %{iota(-1)-1}, 1", level)
             out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
@@ -1622,27 +1634,18 @@ def compile_node(node, level, assignable = 0):
         case kind.OPERAND:
             if node.tkname() == "=":
                 src = compile_node(src_node, level)
-                if dest_node.kind == kind.WORD:
-                    if dest_node.tkname() not in state.current_namespace:
-                        dest_node.tn = src_node.tn
-                        dest_node.kind = kind.VARDECL
-                        add_usr_var(dest_node, level)
-                        out_writeln(f"%{dest_node.tkname()} = alloca {rlt(dest_node.tn)}", level)
-                        dest = f"%{dest_node.tkname()}"
-                    else:
-                        dest_node.tn = src_node.tn
-                        dest_node.kind = kind.VARREF
-                        
-                        dest = compile_node(dest_node, level, 1)
-                else:
-                    dest = compile_node(dest_node, level, 1)
-                # debug(f"[OPERAND]: source node is of kind {human_kind[src_node.kind]}")
-                if src_node.tn.ptrl and dest_node.tn.ptrl and dest_node.tn.type == sw_type.CHAR:
+                if dest_node.tn.unknown():
+                    # compiler_error(dest_node, f"Assuming type of source {hlt(src_node.tn)}", 0)
+                    dest_node.tn = src_node.tn
+                dest = compile_node(dest_node, level, 1)
+
+                node.tn = dest_node.tn
+                if src_node.tn.isptr() and dest_node.tn.isptr() and dest_node.tn.type == sw_type.CHAR:
                     out_writeln(f"store ptr {src}, ptr {dest}", level)
                 elif src_node.kind == kind.NUM_LIT:
                     out_writeln(f"store {rlt(dest_node.tn)} {src}, ptr {dest}", level)
                 elif not type_cmp(src_node.tn, dest_node.tn):
-                    compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.tn)}' != '{hlt(src_node.tn)}'")
+                    compiler_error(src_node, f"Types don't match in assignment '{hlt(dest_node.tn)}' != '{hlt(src_node.tn)}'")
                 else:
                     out_writeln(f"store {rlt(dest_node.tn)} {src}, ptr {dest}", level) ## edited
                 return src
@@ -1670,7 +1673,6 @@ def compile_node(node, level, assignable = 0):
                 while dest_node.tn.ptrl > 0:
                     if not assignable or do_incdec:
                         dest_node.tn.ptrl -= 1
-                    # debug("dereference struct")
                     out_writeln(f"; dereferencing sturct", level)
                     out_writeln(f"%{iota()} = load {rlt(dest_node.tn)}, ptr {dest}", level)
                     dest = f"%{iota(-1)}"
@@ -1683,10 +1685,8 @@ def compile_node(node, level, assignable = 0):
                 field_id = struct_node.find_by_name(src_node.tkname(), src_node)
                 field_node = struct_node.children[field_id]
                 
-                debug(field_node.tkname(), hlt(field_node.tn))
 
                 if assignable or do_incdec:
-                    # debug("[FIELD TYPE]:", hlt(field_node.tn))
                     # out_writeln(f"%{iota()} = load {rlt(struct_node.tn.type, struct_node.tn.ptrl)}, ptr {dest}", level)
                     out_writeln(f"%{iota()} = getelementptr {rlt(struct_node.tn)}, ptr {dest}, i32 0 ,i32 {field_id}", level)
                     inc_dest = f"%{iota(-1)}"
@@ -1701,9 +1701,7 @@ def compile_node(node, level, assignable = 0):
 
 
                 if do_incdec:
-                    # debug("[FIELD SCR NODE]: compiling incdec", src_node.block)
                     compile_incdec(ret_val, f"%{iota(-1)-1}", src_node.block.kind, node, level)
-                # debug("[NODE TYPE]:", hlt(node.tn))
                 return ret_val
 
             elif node.tkname() == "(": # FUNCALL
@@ -1720,7 +1718,6 @@ def compile_node(node, level, assignable = 0):
                 elif dest_node.tn.is_callable():
                     funcinfo = dest_node.tn
                 else:
-                    # debug(dest_node)
                     compiler_error(dest_node, "Not a callable")
 
                 var_length = 0
@@ -1729,7 +1726,6 @@ def compile_node(node, level, assignable = 0):
                         var_length = 1
                     
                 if not var_length and len(funcinfo.children) != len(src_node.children):
-                    debug(rlt(funcinfo))
                     compiler_error(dest_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}")
                     
                 for idx, arg in enumerate(src_node.children):
@@ -1738,13 +1734,9 @@ def compile_node(node, level, assignable = 0):
                     if var_length:
                         if idx < len(funcinfo.children)-1 and not type_cmp(arg.tn, funcinfo.children[idx]) and not arg.tn.type == sw_type.INT:
                             compiler_error(arg, f"Vargument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg.tn)}")
-                        else:
-                            debug("TYPE MATCHES", arg_names[idx], arg.tkname())
                     else:
                         if not type_cmp(arg.tn, funcinfo.children[idx]) and not arg.tn.type == sw_type.INT:
                             compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg.tn)}")
-                        else:
-                            debug("TYPE MATCHES", arg_names[idx], arg.tkname())
                 if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
                     out_write(f"call void {to_call}(", level); iota()
                 else:
@@ -1758,7 +1750,6 @@ def compile_node(node, level, assignable = 0):
             else:
                 for idx, arg in enumerate(node.children):
                     arg_names.append(compile_node(arg, level))
-                    # # debug("types for node:", node.tkname(), hlt(node.tn.type, node.tn.ptrl), hlt(arg.tn.type, arg.tn.ptrl))
                 
                 if not type_cmp(src_node.tn, dest_node.tn):
                     if src_node.tn.isptr() or dest_node.tn.isptr():
@@ -1894,7 +1885,6 @@ def compile_node(node, level, assignable = 0):
         case kind.REFPTR:
             dest = compile_node(node.block, level)
             if not node.block.tn.ptrl:
-                debug(hlt(node.block.tn))
                 compiler_error(node, "Only pointers can be dereferenced")
             out_writeln(f"%{iota()} = getelementptr {rlt(ftn(node.block.tn.type, node.block.tn.ptrl-1))}, {rlt(ftn(node.block.tn.type, node.block.tn.ptrl))} {dest}, i64 0", level)
             if not assignable:
@@ -1943,7 +1933,7 @@ def compile_node(node, level, assignable = 0):
 
             ret = compile_node(node.block, nlevel)
             if not node.block.isterminator():
-                compile_return(node.block, ret, nlevel);
+                compile_return(node.block.children[-1], ret, nlevel);
 
             func_info_stack.pop()
             out_writeln("}\n", 0)
@@ -1978,7 +1968,6 @@ def compile_node(node, level, assignable = 0):
                 out_writeln(f"else.{branch_id}:", level)
                 ret = compile_node(else_node, nlevel)
                 then_node = else_node # this is so that even when this branch is not ran, the code can continue with the then_node
-            # debug("[BLOCK]->[RETURNED] -- kind =", human_kind[then_node.kind])
             if not then_node.isterminator():
                 out_writeln(f"br label %done.{branch_id}", nlevel)
             out_writeln(f"done.{branch_id}:", level)
@@ -2025,10 +2014,10 @@ def compile_node(node, level, assignable = 0):
                 out_writeln("; '{node.tkname()}' macro declared here", level)
         
         case kind.WORD:
-            if node.tkname() in state.current_namespace:
-                node.kind = kind.VARREF
-                node.tn = state.current_namespace[node.tkname()].tn
-                return compile_node(node, level, assignable)
+            # if node.tkname() in state.current_namespace:
+            #     node.kind = kind.VARREF
+            #     node.tn = state.current_namespace[node.tkname()].tn
+            #     return compile_node(node, level, assignable)
             compiler_error(node, "Unexpected unqualified word '&t' cannot be compiled")
 
         # case kind.NULL: # null nodes should not make it to the compilation stage
@@ -2057,7 +2046,6 @@ compile_nodes(nodes)
 
 out.close()
 
-# debug(declared_structs, "\n", human_type, "\n", [(x.tn.type, x.tn.ptrl) for key, x in declared_structs.items()])
 
 compiler_call = f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.b}"
 

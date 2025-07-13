@@ -18,3 +18,10 @@ func void main() {
         printf("|%s|\n", consume(tokens).token);
     };
 }
+
+
+
+
+
+
+

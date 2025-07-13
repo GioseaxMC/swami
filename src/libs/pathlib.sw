@@ -1,6 +1,7 @@
-# requires:
-#   - stdlib.sw
-#   - darrays.sw
+include {
+    "stdlib.sw",
+    "darrays.sw"
+}
 
 extern ptr char getcwd(ptr char, int)
 extern int chdir(ptr char)
@@ -12,20 +13,19 @@ struct Path {
 }
 
 func ptr char get_cwd() { # swami's getcwd
-    ptr char temp = malloc(4096);
+    reserve 4096 as temp;
     getcwd(temp, 4096);
     int len = strlen(temp);
     ptr char buf = malloc(len+1);
     memcpy(buf, temp, len+1);
-    free(temp);
     return buf;
 }
 
 func void path_add(ptr Path path, ptr char _pathstr) {
-    String pathstr = SS(_pathstr);
+    pathstr = SS(_pathstr);
     str_replace(&pathstr, "\\", "/");
-    String_vec elements = str_split(pathstr, *"/");
-    foreach(elements, String, it, {
+    StringVec elements = str_split(pathstr, *"/");
+    foreach(elements, it, {
         if streq(it.items, ".") {
             str_free(it);
 
@@ -58,14 +58,14 @@ func Path path_init(ptr char _pathstr) {
 }
 
 func void path_free(ptr Path path) {
-    foreach(path, ptr char, str, {
+    foreach(path, str, {
         free(*str);
     });
     da_free(path);
 }
 
 func void path_reset(ptr Path path) {
-    foreach(path, ptr char, str, {
+    foreach(path, str, {
         free(str);
     });
     path.length = 0;
@@ -73,7 +73,7 @@ func void path_reset(ptr Path path) {
 
 func String path_str(Path path) {
     String pathstr = SS("");
-    foreach(path, ptr char, item, {
+    foreach(path, item, {
         str_add(&pathstr, *item);
         if op_ptr(item, !=, da_end(path)) {
             str_add(&pathstr, "/");
@@ -83,10 +83,9 @@ func String path_str(Path path) {
 }
 
 func Path get_cwd_as_path() {
-    ptr char cwd = malloc(1024);
+    reserve 1024 as cwd;
     getcwd(cwd, 1024);
     Path pcwd = path_init(cwd);
-    free(cwd);
     pcwd;
 }
 
