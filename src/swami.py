@@ -103,12 +103,15 @@ sizeof_type = [
 ]
 
 def rlt(tn):
+    tpn = ""
     if not DEBUGGING and tn.type < 0:
         compiler_error(node_stack.pop(), "Invalid type, this is a bug")
+    if tn.count:
+        tpn += f"[{tn.count} x "
     if tn.isptr() and tn.type==sw_type.VOID:
         return "ptr"
     else:
-        tpn = f"{llvm_type[tn.type]+"*"*tn.ptrl}"
+        tpn += f"{llvm_type[tn.type]+"*"*tn.ptrl}"
     for idx, ntn in enumerate(tn.children):
         if not idx:
             tpn += "("
@@ -117,6 +120,8 @@ def rlt(tn):
         tpn += rlt(ntn)
     if len(tn.children):
         tpn+=")"
+    if tn.count:
+        tpn += "]"
     tpn += "*"*tn.outptrl
     return tpn
 
@@ -133,6 +138,8 @@ def hlt(tn):
     if len(tn.children):
         tpn+=")"
     tpn += " ptr"*tn.outptrl
+    if tn.count:
+        tpn+= f"[{tn.count}]"
     return tpn
 
 TL = "╭"
@@ -165,6 +172,9 @@ class WindowPrint:
         print(self.color+BL + HH*(self.width+2) + BR + f.RESET)
 
 def parser_error(token, prompt, errno = -1):
+    if len(macro_call_stack) and errno:
+        call = macro_call_stack.pop()
+        parser_error(call.token, "From macro call", 1);
     global error_sum; error_sum += abs(errno)
     COLOR = f.MAGENTA
     if errno:
@@ -229,7 +239,8 @@ def uisalnum(s: str) -> bool:
     return all(c.isalnum() or c == "_" for c in s)
 
 def tokenizable(s: str) -> bool:
-    return uisalnum(s) and not s[0].isnumeric() 
+    cond1 = uisalnum(s) or uisalnum(s[1:]) and s[0] == "$"
+    return cond1 and not s[0].isnumeric() 
 
 def represents_string(s:str) -> bool:
     return s[0] == "\"" and s[-1] == "\""
@@ -334,6 +345,7 @@ class typenode:
         self.type = sw_type.VOID
         self.ptrl = 0
         self.outptrl = 0
+        self.count = 0
         self.children = []
     
     def unknown(self):
@@ -349,11 +361,9 @@ class typenode:
         return len(self.children)
     
     def isptr(self):
-        return self.ptrl or self.outptrl
+        return self.ptrl or self.outptrl or self.count
     
     def isstruct(self):
-        if self.isptr():
-            return 0
         return self.type > sw_type.ANY
 
     def get_zero(self):
@@ -365,6 +375,7 @@ class typenode:
         new.type = self.type
         new.ptrl = self.ptrl
         new.outptrl = self.outptrl
+        new.count = self.count
         new.children = self.children.copy()
         return new
     
@@ -378,12 +389,17 @@ class typenode:
         new = self.copy()
         new.ptrl = 0
         new.outptrl = 0
+        new.count = 0
+        new.children = []
         return new
 
     def __add__(self, n):
         new = typenode()
         new.type = self.type
-        if self.outptrl:
+        new.ptrl = self.ptrl
+        new.outptrl = self.outptrl
+        new.count = self.count
+        if self.outptrl or self.count:
             new.outptrl = self.outptrl+n
             new.ptrl = self.ptrl
         else:
@@ -395,12 +411,15 @@ class typenode:
     def __sub__(self, n):
         new = typenode()
         new.type = self.type
+        new.ptrl = self.ptrl
+        new.outptrl = self.outptrl
+        new.count = self.count
         if self.outptrl:
-            new.outptrl = self.output-n
-            new.ptrl = self.ptrl
+            new.outptrl = self.outptrl-n
+        elif self.count:
+            new.count = 0
         else:
             new.ptrl = self.ptrl-n
-            new.outptrl = self.outptrl
         new.children = self.children
         return new
 
@@ -432,6 +451,9 @@ class Node:
 
     def isterminator(self):
         return self.kind in (kind.RET, kind.BREAK, kind.CONTINUE)
+
+    def isliteral(self):
+        return self.kind in (kind.NUM_LIT, kind.STR_LIT)
 
 OUTFILE_PATH = "./main.ll"
 INFILE_PATH = "./main.sw"
@@ -493,6 +515,7 @@ class kind:
 
     CONTINUE = iota()
     STRUCTFIELD = iota()
+    LIST_LIT = iota()
 
     NULL = iota()
 
@@ -539,6 +562,7 @@ human_kind = [
 
     "continue"
     "struct field",
+    "list literal",
 
     "null",
 ]
@@ -552,6 +576,7 @@ class compiler_state:
         self.declared_params: list[str] = []
         self.declared_funcs: dict[str, Node] = {}
         self.declared_strings: list[str] = []
+        self.declared_lists: list[str] = []
         self.declared_structs: dict = {}
         self.declared_macros: dict[str, Node] = {}
         
@@ -722,8 +747,11 @@ def funcref_from_word(word: Node):
 
 def sizeof(tn: typenode): # in bytes please
     if tn.isptr():
-        return word_bytes
-    return sizeof_type[tn.type]
+        if tn.outptrl:
+            return word_bytes
+        else:
+            return word_bytes * (1 if not tn.count else tn.count)
+    return sizeof_type[tn.type]* (1 if not tn.count else tn.count)
 
 def get_max_size(tn: typenode): # in bytes please
     if tn.isptr():
@@ -734,6 +762,17 @@ def get_max_size(tn: typenode): # in bytes please
         for child in structinfo.children:
             max_size = max(max_size, get_max_size(child.tn))
     return sizeof(tn)
+
+def type_cmp(type1, type2):
+    if type1.ptrl and type2.ptrl:
+        return 1
+    else:
+        cond = 1
+        for c1, c2 in zip(type1.children, type2.children):
+            if not type_cmp(c1, c2):
+                return 0
+        return (type1.type, type1.ptrl, type1.count) == (type2.type, type2.ptrl, type2.count)
+
 
 def parse():
     global parse_indentation
@@ -781,9 +820,14 @@ def parse_type(tn):
             if tokens.current()[-1] != ")":
                 tokens.expect(",")
         tokens.expect(")")
-        while tokens.current()[-1] == human_type[sw_type.PTR]:
-            tokens.consume()
-            tn.outptrl += 1
+    if tokens.current()[-1] == "[":
+        parser_error(tokens.current(), "Invalid type")
+        tokens.consume()
+        tn.count = int(tokens.consume()[-1])
+        tokens.expect("]")
+    while tokens.current()[-1] == human_type[sw_type.PTR]:
+        tokens.consume()
+        tn.outptrl += 1
 
 def parse_named_arg(closer):
     node = Node()
@@ -914,7 +958,7 @@ def parse_macro_call():
             left = current_macro_tks.pop(idx-1)
             current_macro_tks.pop(idx-1)
             right = current_macro_tks.pop(idx-1)
-            left = (*left[::-1], left[-1]+right[-1])
+            left = (*left[:-1], left[-1]+right[-1])
             current_macro_tks.insert(idx-1, left)
         else:
             idx+=1
@@ -1117,7 +1161,6 @@ def parse_inclusion(node) -> Node:
     tokens.expect(closer)
     return node
     
-
 def parse_primary():
     global state
     
@@ -1128,6 +1171,7 @@ def parse_primary():
 
     if token[-1].isnumeric():
         node.kind = kind.NUM_LIT
+        node.tn = ftn(sw_type.INT, 0)
         
     elif represents_string(token[-1]):
         node.kind = kind.STR_LIT
@@ -1146,6 +1190,43 @@ def parse_primary():
         node.children.append(parse_expression(0))
         node.tn = node.children[-1].tn.copy()
         tokens.expect(")")
+
+    elif token[-1] == "[":
+        node.kind = kind.LIST_LIT
+
+        while tokens.current()[-1] != "]":
+            cnode = parse_expression(0)
+            if len(node.children):
+                if not type_cmp(cnode.tn, node.children[-1].tn):
+                    if cnode.tn.unknown() or cnode.kind == kind.NUM_LIT:
+                        cnode.tn = node.children[-1].tn.copy()
+                    else:
+                        compiler_error(cnode, f"Incorrect type for list of {hlt(node.tn)}s")
+            else:
+                node.tn = cnode.tn.copy()
+            node.children.append(cnode)
+
+
+            if tokens.current()[-1] != "]":
+                tokens.expect(",")
+        
+        if node.tn.unknown():
+            compiler_error(node, "Failed to derive list's type")
+        list_string = f"[{len(node.children)+1} x {rlt(node.tn)}] ["
+        node.tn.count = len(node.children)+1
+        for idx, child in enumerate(node.children):
+            if idx:
+                list_string += ", "
+            list_string += f"{rlt(cnode.tn)} { f"@str.{child.int_val}" if child.kind == kind.STR_LIT else f"{child.tkname()}" if child.kind == kind.NUM_LIT else "zeroinitializer" }"
+        list_string += f", {rlt(cnode.tn)} zeroinitializer"
+        list_string += "]"
+
+        if list_string not in state.declared_lists:
+            state.declared_lists.append(list_string)
+        node.int_val = state.declared_lists.index(list_string)
+    
+        node.tn = node.tn.simple()+1
+        tokens.expect("]")
     
     elif token[-1] == "{":
         node.kind = kind.BLOCK
@@ -1155,12 +1236,12 @@ def parse_primary():
     elif token[-1] == "&":
         node.kind = kind.GETPTR
         node.block = parse_expression(0)
-        node.tn = node.block.tn.copy()
+        node.tn = node.block.tn.copy()+1
 
     elif token[-1] == "*":
         node.kind = kind.REFPTR
         node.block = parse_primary()
-        node.tn = node.block.tn.copy()
+        node.tn = node.block.tn.copy()-1
     
     elif token[-1] == "@":
         systk = tokens.consume()
@@ -1328,6 +1409,7 @@ def parse_expression(importance): # <- wanted to write priority
         match op_token[-1]:
             case "[":
                 right_node = parse_expression(0)
+                op_node.tn = node.tn-1
                 tokens.expect("]")
             case "(":
                 right_node = Node()
@@ -1335,13 +1417,22 @@ def parse_expression(importance): # <- wanted to write priority
                 parse_funcall(right_node)
             case "=":
                 right_node = parse_expression(get_importance(op_token))
+                node.tn = right_node.tn
                 if node.kind == kind.WORD:
                     node.kind = kind.VARDECL
                     add_usr_var(node, parse_indentation)
             case ".":
                 right_node = parse_expression(get_importance(op_token))
+
                 if right_node.kind in (kind.WORD, kind.VARREF):
                     right_node.kind = kind.STRUCTFIELD
+
+                    if not node.tn.isstruct():
+                        compiler_error(node, "Can only extract field from structs");
+                    struct_node = state.declared_structs[hlt(node.tn.base())]
+                    field_id = struct_node.find_by_name(right_node.tkname(), right_node)
+                    field_node = struct_node.children[field_id]
+                    op_node.tn = field_node.tn
                 else:
                     parser_error(right_node.token, "Expected a struct field");
 
@@ -1362,16 +1453,6 @@ def out_write(content, level):
 def out_writeln(content, level):
     out_write(content, level)
     out_write("\n", 0)
-
-def type_cmp(type1, type2):
-    if type1.ptrl and type2.ptrl:
-        return 1
-    else:
-        cond = 1
-        for c1, c2 in zip(type1.children, type2.children):
-            if not type_cmp(c1, c2):
-                return 0
-        return (type1.type, type1.ptrl) == (type2.type, type2.ptrl)
 
 def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> tuple[str, typenode]:
     typecmp = src_tn.isptr() - dest_tn.isptr() # > 0 
@@ -1397,11 +1478,17 @@ def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> t
 
     else:
         if dest_tn.type == sw_type.BOOL:
+            if src_tn.isstruct():
+                compiler_error(node_stack.pop(), "Cannot cast from struct to boolean");
             out_writeln(f"%{iota()} = icmp ne {rlt(src_tn)} {src}, 0", level)
         else:
             if sizeof(dest_tn) > sizeof(src_tn):
+                if dest_tn.isstruct():
+                    compiler_error(node_stack.pop(), "Cannot cast structs")
                 out_writeln(f"%{iota()} = zext {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
             elif sizeof(dest_tn) < sizeof(src_tn):
+                if src_tn.isstruct():
+                    compiler_error(node_stack.pop(), "Cannot cast structs")
                 out_writeln(f"%{iota()} = trunc {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
             else:
                 out_writeln(f"%{iota()} = bitcast {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
@@ -1493,12 +1580,16 @@ def compile_node(node, level, assignable = 0):
        
         case kind.BLOCK:
             ret = ""
+            if node.tkname() in state.declared_macros:
+                macro_call_stack.append(node)
             for arg in node.children:
                 ret = compile_node(arg, level, assignable)
-                node.tn.type, node.tn.ptrl = arg.tn.type, arg.tn.ptrl
+                node.tn = arg.tn.copy()
                 if arg.kind in (kind.RET, kind.BREAK, kind.CONTINUE):
                     node.kind = kind.RET
                     break
+            if node.tkname() in state.declared_macros:
+                macro_call_stack.pop()
             return ret
 
         case kind.SIZEOF:
@@ -1517,14 +1608,21 @@ def compile_node(node, level, assignable = 0):
 
         case kind.STR_LIT:
             # node.tn.type = sw_type.CHAR
-            node.tn.ptrl = 1
+            # node.tn.ptrl = 1
             return f"@str.{node.int_val}"
 
         case kind.NUM_LIT:
-            node.tn.type = sw_type.INT
-            node.tn.ptrl = 0
             return f"{node.tkname()}"
         
+        case kind.LIST_LIT:
+            for idx, child in enumerate(node.children):
+                if not child.isliteral():
+                    out_writeln(f"; compiling list element {idx}", level)
+                    to_store = compile_node(child, level)
+                    out_writeln(f"%{iota()} = getelementptr {rlt(child.tn)}, ptr @list.{node.int_val}, i32 {idx}", level)
+                    out_writeln(f"store {rlt(child.tn)} {to_store}, ptr %{iota(-1)}", level)
+            return f"@list.{node.int_val}"
+
         case kind.TYPE:
             ...
 
@@ -1563,6 +1661,7 @@ def compile_node(node, level, assignable = 0):
             if level:
                 out_writeln(f"%{node.tkname()} = alloca {rlt(node.tn)}", level)
                 if node.block:
+                    compiler_error(node, "Shouldn't get here")
                     to_assign = compile_node(node.block, level)
                     if node.block.tn.ptrl and node.tn.ptrl and node.tn.type == sw_type.CHAR:
                         out_writeln(f"store ptr {to_assign}, ptr %{node.tkname()}", level)
@@ -1621,7 +1720,7 @@ def compile_node(node, level, assignable = 0):
         
         case kind.INC:
             dest = compile_node(node.block, level, 1)
-            node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl-1
+            node.tn = node.block.tn
             out_writeln(f"%{iota()} = load {rlt(node.block.tn-1)}, ptr {dest}", level)
             out_writeln(f"%{iota()} = add {rlt(node.block.tn-1)} %{iota(-1)-1}, 1", level)
             out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
@@ -1629,9 +1728,9 @@ def compile_node(node, level, assignable = 0):
 
         case kind.DEC:
             dest = compile_node(node.block, level, 1)
-            node.tn.type, node.tn.ptrl = node.block.tn.type, node.block.tn.ptrl-1
+            node.tn = node.block.tn
             out_writeln(f"%{iota()} = load {rlt(node.block.tn-1)}, ptr {dest}", level)
-            out_writeln(f"%{iota()} = sub {rlt(node.block-1)} %{iota(-1)-1}, 1", level)
+            out_writeln(f"%{iota()} = sub {rlt(node.block.tn-1)} %{iota(-1)-1}, 1", level)
             out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
             return f"%{iota(-1)}"
 
@@ -1649,7 +1748,7 @@ def compile_node(node, level, assignable = 0):
                 elif src_node.kind == kind.NUM_LIT:
                     out_writeln(f"store {rlt(dest_node.tn)} {src}, ptr {dest}", level)
                 elif not type_cmp(src_node.tn, dest_node.tn):
-                    compiler_error(src_node, f"Types don't match in assignment '{hlt(dest_node.tn)}' != '{hlt(src_node.tn)}'")
+                    compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.tn)}' != '{hlt(src_node.tn)}'")
                 else:
                     out_writeln(f"store {rlt(dest_node.tn)} {src}, ptr {dest}", level) ## edited
                 return src
@@ -1657,8 +1756,10 @@ def compile_node(node, level, assignable = 0):
             elif node.tkname() == "[":
                 dest = compile_node(dest_node, level) # assignable
                 src = compile_node(src_node, level)
+                if src_node.tn.isptr():
+                    compiler_error(src_node, "Can only index using integer indices")
                 if not dest_node.tn.isptr():
-                    compiler_error(dest_node, "Can only index into pointers")
+                    compiler_error(dest_node, f"Can only index into pointers, cannot index {hlt(dest_node.tn)}")
                 out_writeln(f"%{iota()} = getelementptr {rlt(dest_node.tn-1)}, ptr {dest}, {rlt(src_node.tn)} {src}", level)
                 if not assignable:
                     out_writeln(f"%{iota()} = load {rlt(dest_node.tn-1)}, ptr %{iota(-1)-1}", level)
@@ -1755,13 +1856,16 @@ def compile_node(node, level, assignable = 0):
                 for idx, arg in enumerate(node.children):
                     arg_names.append(compile_node(arg, level))
                 
+                if src_node.tn.isptr() or dest_node.tn.isptr():
+                    if dest_node.tn.isptr():
+                        arg_names[0], dest_node.tn = compile_cast(arg_names[0], dest_node.tn, ftn(sw_type.INT, 0), level)
+                    if src_node.tn.isptr():
+                        arg_names[1], src_node.tn = compile_cast(arg_names[1], src_node.tn, ftn(sw_type.INT, 0), level)
                 if not type_cmp(src_node.tn, dest_node.tn):
-                    if src_node.tn.isptr() or dest_node.tn.isptr():
-                        if node.tkname() in ("+","-","*","/","%"):
-                            compiler_error(node, "cannot perform arithmetic operations on pointers, please cast to int, then back to pointers")
-                        else:
-                            compiler_error(src_node, "cannot perform logic operations on pointers, please cast to int")
-                    else:
+                        #if node.tkname() in ("+","-","*","/","%"):
+                        #    compiler_error(node, "cannot perform arithmetic operations on pointers, please cast to int, then back to pointers")
+                        #else:
+                        #    compiler_error(node, "cannot perform logic operations on pointers, please cast to int")
                         if dest_node.kind == kind.NUM_LIT:
                             node.tn = src_node.tn.copy()
                         elif src_node.kind == kind.NUM_LIT:
@@ -1952,7 +2056,7 @@ def compile_node(node, level, assignable = 0):
         
         case kind.IF:
             compiled_node = compile_node(node.block, nlevel)
-
+            
             then_node = node.children[0]
             branch_id = iota()
             has_else = len(node.children) > 1
@@ -2039,6 +2143,11 @@ def compile_nodes(nodes):
 iota(1)
 for string in state.declared_strings:
     out_writeln(f"@str.{iota()-1} = global [{llvm_len(string)-1} x i8] c\"{string[1:-1]}\\00\"", 0)
+out_writeln("", 0)
+
+iota(1)
+for vector in state.declared_lists:
+    out_writeln(f"@list.{iota()-1} = global {vector}", 0)
 out_writeln("", 0)
 
 for node in nodes:

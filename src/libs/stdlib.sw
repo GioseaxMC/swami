@@ -48,6 +48,19 @@ macro for(decl, cond, inc, body) {{
     while (cond) { body; inc; };
 };}
 
+macro lambda_len(__arr__var, __criteria__func) {
+    macro __arr__var@loop ( $ ) {
+        { __arr__var@__i_counter_array=0; };
+        while (__criteria__func) ++__arr__var@__i_counter_array;
+        __arr__var@__i_counter_array;
+    };
+    __arr__var@loop(__arr__var[__arr__var@__i_counter_array]);
+}
+
+macro len(__arr__var) {
+    lambda_len(__arr__var, $);
+}
+
 macro TODO(__random_shit) {
     panic "Not implemented yet."
 }
@@ -132,7 +145,7 @@ macro copy(__str) { SS(cstr(__str)); }
 func void str_set(ptr String _str, ptr char other) {
 	String str = *_str;
     int other_length = strlen(other);
-	str.capacity = next_powt(other_length);
+    str.capacity = next_powt(other_length);
 	ptr char old_items = str.items;
 	str.items = malloc(str.capacity);
     strcpy(str.items, other);
