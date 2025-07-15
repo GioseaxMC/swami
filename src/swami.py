@@ -923,7 +923,6 @@ def parse_macro_call():
     global tokens, parse_indentation
     node = Node()
     node.token = tokens.prev()
-    macro_call_stack.append(node)
     macro_args = []
     tokens.expect("(")
     while tokens.current()[-1] != ")":
@@ -976,7 +975,6 @@ def parse_macro_call():
     parse_indentation = old_pi
 
     tokens = og_tokens
-    macro_call_stack.pop()
     return node;
 
 def parse_block():

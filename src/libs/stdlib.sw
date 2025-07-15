@@ -6,6 +6,7 @@ extern ptr void realloc(ptr void, int)
 
 extern void free(ptr void)
 extern void exit(int)
+extern ptr char memset(ptr char, int, int)
 
 extern int strlen(ptr char)
 extern void strcpy(ptr char, ptr char)
@@ -66,8 +67,8 @@ macro TODO(__random_shit) {
 }
 
 macro salloc(size) {{
-    reserve size as __stack_alloced;
-    __stack_alloced;
+    reserve size as __stack_alloced@size;
+    __stack_alloced@size;
 };}
 
 ptr void nullptr = 0

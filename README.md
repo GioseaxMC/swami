@@ -4,7 +4,7 @@ A low level, compiled language written in python
 ## Goals
 - [x] Convenient
 - [x] Statically typed
-- [ ] Turing Completeness (it is, but i didn't prove it yet)
+- [x] Turing Completeness (see examples/09_rule_110.sw)
 - [ ] Self Hosted
 - [ ] Natively compiled
 ## Dependencies
