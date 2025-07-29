@@ -7,7 +7,7 @@ func int main(int argc, ptr ptr char argv) {
 
     n = add_integer_arg(parser, "-n", "It's a number");
     *n = 0;
-    
+
     s = add_string_arg(parser, "-s", "It's a string");
     *s = "(null)";
     

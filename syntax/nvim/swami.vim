@@ -1,4 +1,4 @@
-syntax keyword swamiType int char ptr <> bool void
+syntax keyword swamiType int char ptr <> bool void i64 i32 i16
 
 syntax match swamiNumber /\<\d\+\>/
 syntax keyword swamiKeyword TODO return func type struct if else while for foreach extern include macro cast as sizeof param panic reserve break continue

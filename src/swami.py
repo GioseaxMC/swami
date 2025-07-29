@@ -3,7 +3,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from sys import *
 from colorama import Fore as f
-from pprint import pp
+from pprint import pprint, pp
 from copy import copy, deepcopy
 from platform import system
 argc = len(argv)
@@ -353,12 +353,14 @@ class typenode:
 
     def from_node(node):
         tn = node.tn.copy()
+        del tn.children
+        tn.children = []
         for cc in node.children:
             tn.children.append(cc.tn.copy())
         return tn
 
     def is_callable(self):
-        return len(self.children)
+        return self.outptrl or len(self.children)
     
     def isptr(self):
         return self.ptrl or self.outptrl or self.count
@@ -378,7 +380,7 @@ class typenode:
         new.count = self.count
         new.children = self.children.copy()
         return new
-    
+
     def simple(self):
         new = typenode()
         new.type = self.type
@@ -454,6 +456,9 @@ class Node:
 
     def isliteral(self):
         return self.kind in (kind.NUM_LIT, kind.STR_LIT)
+
+    def __repr__(self):
+        return f"type: {hlt(self.tn)} - tkname: {self.tkname()}"
 
 OUTFILE_PATH = "./main.ll"
 INFILE_PATH = "./main.sw"
@@ -581,6 +586,7 @@ class compiler_state:
         self.declared_macros: dict[str, Node] = {}
         
         self.current_namespace = self.global_vars
+    
 state = compiler_state()
 
 node_stack: list[Node] = []
@@ -597,7 +603,7 @@ def add_usr_var(node, parse_indentation):
     exists = 0
     if node.tkname() in namespace:
         exists = 1
-    namespace[node.tkname()] = node
+    namespace[node.tkname()] = deepcopy(node)
    
     return exists
 
@@ -991,7 +997,8 @@ def parse_block():
         # if node.kind not in (kind.WHILE, kind.IF): # will break some code, will fix the code as i see it breaking
         tokens.expect(";")
     tokens.expect("}")
-    block.tn = block.children[-1].tn.copy()
+    if len(block.children):
+        block.tn = block.children[-1].tn.copy()
     return block
     
 def parse_funcdecl(node):
@@ -1244,9 +1251,12 @@ def parse_primary():
     elif token[-1] == "@":
         systk = tokens.consume()
         old_state = deepcopy(state)
+        pprint(state)
         node = parse_expression(0)
         if systk[-1] != os_name:
             state = old_state
+            print("IGNORING BECAUSE ITS NOT THE OS")
+            pprint(state)
             node.kind = kind.NULL
 
     elif token[-1] == "func":
@@ -1299,7 +1309,7 @@ def parse_primary():
         node.string_val = tokens.consume()[-1]
         if node.string_val not in state.declared_params:
             state.declared_params.append(node.string_val)
-            args.b += f" {node.string_val[1:-1]} "
+            # args.b += f" {node.string_val[1:-1]} "
     
     elif token[-1] == "panic":
         msg = tokens.consume()[-1]
@@ -1426,7 +1436,7 @@ def parse_expression(importance): # <- wanted to write priority
                     right_node.kind = kind.STRUCTFIELD
 
                     if not node.tn.isstruct():
-                        compiler_error(node, "Can only extract field from structs");
+                        compiler_error(node, f"Can only extract field from structs, '{hlt(node.tn)}' is not a struct");
                     struct_node = state.declared_structs[hlt(node.tn.base())]
                     field_id = struct_node.find_by_name(right_node.tkname(), right_node)
                     field_node = struct_node.children[field_id]
@@ -1547,7 +1557,7 @@ def compile_node(node, level, assignable = 0):
     check_global(node, level)
     nlevel = level+1
     arg_names = []
-    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), "||",)
+    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), rlt(node.tn), "||",)
 
     if len(node.children) > 1:
         dest_node = node.children[0]
@@ -1697,6 +1707,7 @@ def compile_node(node, level, assignable = 0):
                 else:
                     if node.tn.unknown():
                         node.tn = state.current_namespace[node.tkname()].tn.copy()
+                        print("[][] ", hlt(node.tn))
                     ret_val = f"%{node.tkname()}"
             else:
                 if node.tkname() in state.global_vars:
@@ -1704,6 +1715,7 @@ def compile_node(node, level, assignable = 0):
                 else:
                     if node.tn.unknown():
                         node.tn = state.current_namespace[node.tkname()].tn.copy()
+                        print("[][] ", hlt(node.tn))
                     out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)} %{node.tkname()}", level)
 
                 ret_val = f"%{iota(-1)}"
@@ -1816,11 +1828,12 @@ def compile_node(node, level, assignable = 0):
                     to_call = "@llvm."+dest[1:]
                 else:
                     to_call = dest
-                if dest_node.tkname() in state.declared_funcs:
-                    funcinfo = typenode.from_node(state.declared_funcs[dest_node.tkname()])
-                elif dest_node.tn.is_callable():
+                # if dest_node.tkname() in state.declared_funcs:
+                #     funcinfo = typenode.from_node(state.declared_funcs[dest_node.tkname()])
+                if dest_node.tn.is_callable():
                     funcinfo = dest_node.tn
                 else:
+                    print(1983, rlt(dest_node.tn), "---", hlt(dest_node.tn))
                     compiler_error(dest_node, "Not a callable")
 
                 var_length = 0
@@ -2039,7 +2052,7 @@ def compile_node(node, level, assignable = 0):
 
             ret = compile_node(node.block, nlevel)
             if not node.block.isterminator():
-                compile_return(node.block.children[-1], ret, nlevel);
+                compile_return(node.block, ret, nlevel);
 
             func_info_stack.pop()
             out_writeln("}\n", 0)
@@ -2157,7 +2170,7 @@ compile_nodes(nodes)
 
 out.close()
 
-
+args.b = args.b + " " + " ".join(x[1:-1] for x in state.declared_params)
 compiler_call = f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.b}"
 
 debug("[INFO]: compiler call:", compiler_call)

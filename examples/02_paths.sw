@@ -5,7 +5,7 @@ include {
 }
 
 func int main() {
-    Path path = path_init("/feels/good/to/eat/../be/king/ahah/");
+    path = path_init("/feels/good/to/eat/../be/king/ahah/");
 
     path_add(&path, "../.");
 

@@ -1,0 +1,28 @@
+#pragma once
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdint.h>
+#include <stdbool.h>
+
+typedef struct FsIter FsIter;
+typedef struct FsEntry FsEntry;
+
+FsIter* fs_iter_create(const char* path);
+FsEntry* fs_iter_next(FsIter* iter);
+void fs_iter_destroy(FsIter* iter);
+
+void fs_entry_destroy(FsEntry* entry);
+const char* fs_entry_path(FsEntry* entry);  // valid until next call
+bool fs_entry_is_directory(FsEntry* entry);
+bool fs_entry_is_regular_file(FsEntry* entry);
+bool fs_entry_is_symlink(FsEntry* entry);
+bool fs_entry_exists(FsEntry* entry);
+uintmax_t fs_entry_file_size(FsEntry* entry);
+int64_t fs_entry_last_write_time(FsEntry* entry);
+
+#ifdef __cplusplus
+}
+#endif

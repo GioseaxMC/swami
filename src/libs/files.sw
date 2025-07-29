@@ -13,6 +13,7 @@ extern int strlen(ptr char)
 
 extern ptr void malloc(int)
 
+include { "fsapper.sw" }
 
 int STDIN_FILENO = 0
 int STDOUT_FILENO = 1
