@@ -1,5 +1,5 @@
-@windows param "src/libs/fsapper.o -lstdc++ -lstdc++fs"
-@linux param "src/libs/fsapper-linux.o -lstdc++ -lstdc++fs"
+@windows param "<libs>/fsapper.o -lstdc++ -lstdc++fs"
+@linux param "<libs>/fsapper-linux.o -lstdc++ -lstdc++fs"
 
 extern ptr void fs_iter_create(ptr char)                # Create a directory iterator for the given path (returns opaque pointer)
 extern ptr void fs_iter_next(ptr void)                  # Advance the iterator and return the next entry (returns opaque entry or null)

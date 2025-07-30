@@ -10,13 +10,16 @@ argc = len(argv)
 import argparse
 
 cwd = Path(os.getcwd())
+cwd_str = str(Path(os.getcwd()))
 libs = Path(os.path.realpath(__file__)).parent / "libs"
+libs_str = str(Path(os.path.realpath(__file__)).parent / "libs")
 os_name = system().lower()
 
 parser = argparse.ArgumentParser(description="Swami compiler:\n\tusage: <python> swami.py main.sw -o main")
 
 parser.add_argument('-backend', default="clang", help="the language backend to use to compile llvm (default clang)")
 parser.add_argument('-d', action='store_true', help="Enable # debug mode")
+parser.add_argument('-v', action='store_true', help="Enable # verbose mode")
 
 parser.add_argument('sourcecode', help="The swami file")
 
@@ -44,6 +47,7 @@ def iota(reset: int = 0):
     return iota_counter
 
 DEBUGGING = args.d
+VERBOSE   = args.v
 
 parse_indentation = 0
 error_sum = 0
@@ -52,6 +56,11 @@ def debug(*children, **kwchildren) -> None:
     if not DEBUGGING:
         return
     print(rgb_text(75,75,75)+"│ "*(parse_indentation+1)+f.RESET, end="")
+    print(*children, **kwchildren)
+
+def verbose(*children, **kwchildren) -> None:
+    if not VERBOSE:
+        return
     print(*children, **kwchildren)
 
 @dataclass
@@ -1251,12 +1260,9 @@ def parse_primary():
     elif token[-1] == "@":
         systk = tokens.consume()
         old_state = deepcopy(state)
-        pprint(state)
         node = parse_expression(0)
         if systk[-1] != os_name:
             state = old_state
-            print("IGNORING BECAUSE ITS NOT THE OS")
-            pprint(state)
             node.kind = kind.NULL
 
     elif token[-1] == "func":
@@ -1265,7 +1271,6 @@ def parse_primary():
         parse_funcdecl(node)
 
     elif token[-1] == "extern":
-        # assume_global(token)
         node.kind = kind.EXTERN
         parse_extern(node)
     
@@ -1308,7 +1313,7 @@ def parse_primary():
         node.kind = kind.NULL
         node.string_val = tokens.consume()[-1]
         if node.string_val not in state.declared_params:
-            state.declared_params.append(node.string_val)
+            state.declared_params.append(node.string_val[1:-1].replace("<libs>", libs_str).replace("<cwd>", cwd_str))
             # args.b += f" {node.string_val[1:-1]} "
     
     elif token[-1] == "panic":
@@ -2170,10 +2175,10 @@ compile_nodes(nodes)
 
 out.close()
 
-args.b = args.b + " " + " ".join(x[1:-1] for x in state.declared_params)
+args.b = args.b + " " + " ".join(state.declared_params)
 compiler_call = f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.b}"
 
-debug("[INFO]: compiler call:", compiler_call)
+verbose("[INFO]: compiler call:", compiler_call)
 
 os.system(compiler_call)
 if not args.emit_llvm:
