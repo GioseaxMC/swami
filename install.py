@@ -15,6 +15,8 @@ elif platform.system().lower() == "windows":
 else:
     print("Unsupported platform")
 
+print("Running installation script for", platform.system().lower())
+
 if LINUX and os.geteuid() != 0:
     print("Please run as administrator")
 
