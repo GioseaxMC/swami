@@ -1,3 +1,0 @@
-#!/bin/bash
-
-python3.12 src/swami.py $@ -backend clang-19
