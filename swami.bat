@@ -1,3 +1,9 @@
-@echo on
-cd /d "%~dp0"
-python src/swami.py %*
+@echo off
+
+setlocal
+
+set PYTHON_SCRIPT=%~dp0/src/swami.py
+python %PYTHON_SCRIPT% %*
+
+endlocal
+
