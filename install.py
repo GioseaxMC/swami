@@ -26,7 +26,10 @@ def windows_add_to_path(executable_path: Path):
             0,
             winreg.KEY_READ | winreg.KEY_WRITE ) as key:
         user_path, _ = winreg.QueryValueEx(key, 'PATH')
-        winreg.SetValueEx(key, 'PATH', 0, winreg.REG_EXPAND_SZ, user_path+new_path+";")
+        if new_path not in user_path:
+            winreg.SetValueEx(key, 'PATH', 0, winreg.REG_EXPAND_SZ, user_path+new_path+";")
+        else:
+            print("swami already in path but not installed")
 
 def linux_add_to_path(executable_path: Path):
     subprocess.run(["ln", str(executable_path), "/usr/local/bin/swami"])
