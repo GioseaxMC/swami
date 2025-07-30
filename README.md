@@ -1,4 +1,13 @@
 # Swami
+## Quick, ignorant setup
+linux:
+```
+curl https://raw.githubusercontent.com/gioseaxmc/swami/main/install.py | sudo python
+```
+windows:
+```
+curl https://raw.githubusercontent.com/gioseaxmc/swami/main/install.py | python
+```
 ## Desc
 A low level, compiled language written in python
 ## Goals
