@@ -58,7 +58,7 @@ macro lambda_len(__arr__var, __criteria__func) {
     __arr__var@loop(__arr__var[__arr__var@__i_counter_array]);
 }
 
-macro len(__arr__var) {
+macro array_len(__arr__var) {
     lambda_len(__arr__var, $);
 }
 

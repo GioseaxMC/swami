@@ -238,6 +238,8 @@ human_operands = [
     "->",
 ]
 
+logic_operands = [">", "<", ">=", "<=", "==", "!=", "&&", "||"]
+
 human_unarys = [
     "+",
     "-",
@@ -613,6 +615,9 @@ def add_usr_var(node, parse_indentation):
     if node.tkname() in namespace:
         exists = 1
     namespace[node.tkname()] = deepcopy(node)
+
+    pprint(node.tkname())
+    pprint(namespace)
    
     return exists
 
@@ -986,7 +991,8 @@ def parse_macro_call():
         node.children.append(parse_expression(0))
         tokens.expect(";")
     
-    node.tn = node.children[-1].tn
+    if len(node.children):
+        node.tn = node.children[-1].tn.copy()
     parse_indentation = old_pi
 
     tokens = og_tokens
@@ -1372,6 +1378,7 @@ def parse_primary():
         type_node = Node()
         type_node.token = tokens.current()
         parse_type(type_node.tn)
+        node.tn = type_node.tn # non copy
         node.children.append(type_node)
 
     elif token[-1] in human_type:
@@ -1392,7 +1399,8 @@ def parse_primary():
         parse_funcref(node)
         
 
-    elif token[-1] in state.macro_tokens:
+    elif token[-1] in state.declared_macros:
+        pprint(state.declared_macros)
         node = parse_macro_call()
         node.kind = kind.BLOCK
         node.token = token
@@ -1412,13 +1420,18 @@ def parse_primary():
 def parse_expression(importance): # <- wanted to write priority
     global parse_indentation; parse_indentation += 1
     node = parse_primary()
+    print(tokens.current()[-1])
     while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands:
         op_token = tokens.consume()
         op_node = Node()
         op_node.token = op_token
         op_node.kind = kind.OPERAND
         op_node.children.append(node)
-        op_node.tn = node.tn.simple()
+        if op_token[-1] in logic_operands:
+            op_node.tn = ftn(sw_type.BOOL, 0)
+        else:
+            op_node.tn = node.tn.simple()
+
         match op_token[-1]:
             case "[":
                 right_node = parse_expression(0)
@@ -1995,7 +2008,7 @@ def compile_node(node, level, assignable = 0):
                         node.tn.type, node.tn.ptrl = sw_type.BOOL, 0
                         return result_var
 
-                if node.tkname() in [">", "<", ">=", "<=", "==", "!="]:
+                if node.tkname() in logic_operands:
                     node.tn.type, node.tn.ptrl = sw_type.BOOL, 0
                     return f"%{iota(-1)}"
 
@@ -2008,7 +2021,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.REFPTR:
             dest = compile_node(node.block, level)
-            if not node.block.tn.ptrl:
+            if not node.block.tn.isptr():
                 compiler_error(node, "Only pointers can be dereferenced")
             out_writeln(f"%{iota()} = getelementptr {rlt(ftn(node.block.tn.type, node.block.tn.ptrl-1))}, {rlt(ftn(node.block.tn.type, node.block.tn.ptrl))} {dest}, i64 0", level)
             if not assignable:
