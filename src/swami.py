@@ -1397,7 +1397,6 @@ def parse_primary():
         
 
     elif token[-1] in state.declared_macros:
-        pprint(state.declared_macros)
         node = parse_macro_call()
         node.kind = kind.BLOCK
         node.token = token
