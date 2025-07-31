@@ -34,7 +34,12 @@ def windows_add_to_path(executable_path: Path):
             print("swami already in path but not installed")
 
 def linux_add_to_path(executable_path: Path):
-    subprocess.run(["ln", str(executable_path), "/usr/local/bin/swami"])
+    runner_script = f"""#!/bin/bash
+python3.12 "{install_dir}/src/swami.py" $@
+    """
+    
+    with open("/usr/local/bin", "w") as fp:
+        fp.write(runner_script)
 
 def add_to_path(executable_path: str):
     a_exe_path = Path(executable_path).resolve()
@@ -64,6 +69,7 @@ def main():
     ]).returncode:
         print("Couldnt clone into", GITREPO)
         return 1
+    
 
     return add_to_path(executable_path)
 
