@@ -5,8 +5,6 @@ from pathlib import Path
 
 LINUX = 0
 WINDOWS = 0
-GITREPO = "https://github.com/gioseaxmc/swami.git"
-INSTALLDIR = "/opt/swami" if LINUX else os.path.join(os.getenv("APPDATA"), ".swami")
 
 if platform.system().lower() == "linux":
     LINUX = 1
@@ -15,6 +13,9 @@ elif platform.system().lower() == "windows":
     WINDOWS = 1
 else:
     print("Unsupported platform")
+
+GITREPO = "https://github.com/gioseaxmc/swami.git"
+INSTALLDIR = "/opt/swami" if LINUX else os.path.join(os.getenv("APPDATA"), ".swami")
 
 print("Running installation script for", platform.system().lower())
 
@@ -39,8 +40,10 @@ def linux_add_to_path(executable_path: Path):
 python3.12 "{INSTALLDIR}/src/swami.py" $@
     """
     
-    with open("/usr/local/bin", "w") as fp:
+    with open("/usr/local/bin/swami", "w") as fp:
         fp.write(runner_script)
+
+    subprocess.run(["chmod", "+x", "/usr/local/bin/swami"])
 
 def add_to_path(executable_path: str):
     a_exe_path = Path(executable_path).resolve()
