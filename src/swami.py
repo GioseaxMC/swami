@@ -616,9 +616,6 @@ def add_usr_var(node, parse_indentation):
         exists = 1
     namespace[node.tkname()] = deepcopy(node)
 
-    pprint(node.tkname())
-    pprint(namespace)
-   
     return exists
 
 class Manager:
@@ -1420,7 +1417,6 @@ def parse_primary():
 def parse_expression(importance): # <- wanted to write priority
     global parse_indentation; parse_indentation += 1
     node = parse_primary()
-    print(tokens.current()[-1])
     while tokens.more() and get_importance(tokens.current()) > importance and tokens.current()[-1] in human_operands:
         op_token = tokens.consume()
         op_node = Node()
@@ -1725,7 +1721,6 @@ def compile_node(node, level, assignable = 0):
                 else:
                     if node.tn.unknown():
                         node.tn = state.current_namespace[node.tkname()].tn.copy()
-                        print("[][] ", hlt(node.tn))
                     ret_val = f"%{node.tkname()}"
             else:
                 if node.tkname() in state.global_vars:
@@ -1733,7 +1728,6 @@ def compile_node(node, level, assignable = 0):
                 else:
                     if node.tn.unknown():
                         node.tn = state.current_namespace[node.tkname()].tn.copy()
-                        print("[][] ", hlt(node.tn))
                     out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)} %{node.tkname()}", level)
 
                 ret_val = f"%{iota(-1)}"
@@ -1851,7 +1845,6 @@ def compile_node(node, level, assignable = 0):
                 if dest_node.tn.is_callable():
                     funcinfo = dest_node.tn
                 else:
-                    print(1983, rlt(dest_node.tn), "---", hlt(dest_node.tn))
                     compiler_error(dest_node, "Not a callable")
 
                 var_length = 0
