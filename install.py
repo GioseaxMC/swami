@@ -6,6 +6,7 @@ from pathlib import Path
 LINUX = 0
 WINDOWS = 0
 GITREPO = "https://github.com/gioseaxmc/swami.git"
+INSTALLDIR = "/opt/swami" if LINUX else os.path.join(os.getenv("APPDATA"), ".swami")
 
 if platform.system().lower() == "linux":
     LINUX = 1
@@ -35,7 +36,7 @@ def windows_add_to_path(executable_path: Path):
 
 def linux_add_to_path(executable_path: Path):
     runner_script = f"""#!/bin/bash
-python3.12 "{install_dir}/src/swami.py" $@
+python3.12 "{INSTALLDIR}/src/swami.py" $@
     """
     
     with open("/usr/local/bin", "w") as fp:
@@ -56,20 +57,18 @@ def add_to_path(executable_path: str):
         
 
 def main():
-    install_dir = "/opt/swami" if LINUX else os.path.join(os.getenv("APPDATA"), ".swami")
-    executable_path = os.path.join(install_dir, "swami" if LINUX else "swami.bat")
+    executable_path = os.path.join(INSTALLDIR, "swami" if LINUX else "swami.bat")
 
     if subprocess.run([
         "git",
         "clone",
         GITREPO,
-        install_dir,
+        INSTALLDIR,
         "--depth",
         "1"
     ]).returncode:
         print("Couldnt clone into", GITREPO)
         return 1
-    
 
     return add_to_path(executable_path)
 
