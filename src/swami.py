@@ -1438,7 +1438,7 @@ def parse_expression(importance): # <- wanted to write priority
                 parse_funcall(right_node)
             case "=":
                 right_node = parse_expression(get_importance(op_token))
-                node.tn = right_node.tn
+                op_node.tn = right_node.tn
                 if node.kind == kind.WORD:
                     node.kind = kind.VARDECL
                     add_usr_var(node, parse_indentation)
