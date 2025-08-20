@@ -1081,8 +1081,8 @@ def parse_struct(node):
     for nd in node.children:
         y = sizeof(nd.tn)
         max_size = max(max_size, get_max_size(nd.tn))
-        size = size + ((y - size%y) % y) + y
-    size = size + (max_size - size%max_size) % max_size
+        size = size if not y else size + ((y - size%y) % y) + y
+    size = size if not max_size else size + (max_size - size%max_size) % max_size
     sizeof_type.append(size)
     node.tn.ptrl = 0
     node.tn.type = len(llvm_type)-1
@@ -1682,6 +1682,7 @@ def compile_node(node, level, assignable = 0):
         case kind.VARDECL:
             if level:
                 out_writeln(f"%{node.tkname()} = alloca {rlt(node.tn)}", level)
+                out_writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
                 if node.block:
                     compiler_error(node, "Shouldn't get here")
                     to_assign = compile_node(node.block, level)

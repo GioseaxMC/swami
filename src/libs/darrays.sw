@@ -3,28 +3,37 @@ extern ptr void malloc(int)
 
 extern void memcpy(ptr void, ptr void, int)
 
+macro da_reserve(da, new_size) {
+    if (da).capacity < new_size {
+        (da).capacity = new_size;
+        (da).items = realloc((da).items,
+            (da).capacity*sizeof(*((da).items)));
+    };
+}
+
 macro da_append(da, item) {
-    if ((da).length >= ((da).capacity)) {
-        (da).capacity = (da).capacity*2;
-        if ((da).capacity == 0) {
-            (da).capacity = 8;
-        };
-        (da).items = realloc((da).items, (da).capacity*sizeof(item));
+    if (da).length >= ((da).capacity) {
+        if (da).capacity 
+            da_reserve(da, (da).capacity*2)
+        else
+            da_reserve(da, 16);
     };
     (da).items[(da).length] = (item);
     ++((da).length);
 }
 
-macro da_init(da) {
-    (da).items = cast 0 as ptr void;
-    (da).length = 0;
-    (da).capacity = 0;
-}
+# this is now 'useless', keeping it for legacy code
+    macro da_init(da) {
+        (da).items = cast 0 as ptr void;
+        (da).length = 0;
+        (da).capacity = 0;
+    }
 
-macro da_make(da_t, da) {{
-    da_t da;
-    da_init(da);
-};}
+    macro da_make(da_t, da) {{
+        da_t da;
+        da_init(da);
+    };}
+# end
 
 macro da_len(da) {
     ((da).length);
@@ -41,7 +50,9 @@ macro da_from_ptr(da, _ptr, _len) {
 
 macro da_begin(da) { (da).items; }
 
-macro da_end(da) { cast cast (da).items as int + sizeof(*((da).items))*(da).length as ptr void; }
+macro da_end(da) {  &((da).items[(da).length]); }
+
+macro da_last(da) {  &((da).items[(da).length-1]); }
 
 macro foreach(da, _iter_n, body) {{
     _iter_n = da_begin(da);
@@ -52,17 +63,17 @@ macro foreach(da, _iter_n, body) {{
 };}
 
 macro da_remove(da, idx) {{
-    int _iter_i = 0;
-    int _popped = 0;
+    _iter_i = idx;
     while( _iter_i < (da).length ) {
-        if (_iter_i != idx) {
-            (da).items[_iter_i - _popped] = (da).items[_iter_i];
-        } else {
-            _popped++;
-        };
+        (da).items[_iter_i] = (da).items[_iter_i+1];
         _iter_i++;
     };
-    (da).length = (da).length - _popped;
+    (da).length--;
+};}
+
+macro da_remove_unordered(da, idx) {{
+    (da).items[idx] = *da_end(da);
+    (da).length--;
 };}
 
 macro da_free(da) {

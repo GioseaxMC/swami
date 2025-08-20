@@ -16,6 +16,19 @@ extern int strcmp(ptr char, ptr char)
 # extern int isspace(char)
 # extern int isalnum(char)
 
+func int pow(int base, int power) {
+    if !power return 0;
+
+    int ini_base = base;
+
+    int i=1; while i<power {
+        base = ini_base * ini_base;
+        ++i;
+    };
+
+    return base;
+}
+
 func bool isspace(char c) {
     return (
         c == 32    ||
