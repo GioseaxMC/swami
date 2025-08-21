@@ -158,6 +158,28 @@ VV = "│"
 BR = "╯"
 BL = "╰"
 
+known_files = {}
+def open_file(token: tuple|None, filename: str) -> str:
+    if filename in known_files:
+        print("Known: ", filename);
+        return known_files[filename]
+
+    try:
+        if filename.startswith("https://") or filename.startswith("http://"):
+            from requests import get
+            if not (r:=get(filename)).ok:
+                parser_error(token, f"Failed to retrieve '{filename}'");
+            else:
+                content = get(filename).text
+        else:
+            with open(filename, "r") as fp:
+                content = fp.read()
+    except Exception as e:
+        parser_error(token, f"EXC: Couldn't retrieve '{filename}'");
+
+    known_files[filename] = content
+    return content
+
 class WindowPrint:
     def __init__(self, color):
         self.strings = []
@@ -190,12 +212,14 @@ def parser_error(token, prompt, errno = -1):
         COLOR = f.RED
     p = WindowPrint(COLOR)
     eprint = p.print
-    eprint(get_tk_pos(token)+": "+("ERROR" if errno else "WARNING")+": "+prompt.replace("&t", token[-1]))
-    with open(token[0], "r") as fp:
-        content = fp.read()
+    if token:
+        eprint(get_tk_pos(token)+": "+("ERROR" if errno else "WARNING")+": "+prompt.replace("&t", token[-1]))
+        content = open_file(token, token[0])
         eprint("\n  "+content.split("\n")[token[1]])
         eprint("  "+" "*token[2]+"^")
         eprint("  "+" "*token[2]+"| here")
+    else:
+        eprint(("ERROR" if errno else "WARNIG")+": "+prompt);
     p.flush()
     if errno<0:
         exit(errno)
@@ -681,12 +705,7 @@ class Manager:
     def set(self, nptr):
         self.pointer = nptr
 
-try:
-    with open(INFILE_PATH, "r") as fp:
-        source_codents = fp.read()
-except:
-    print("ERROR: failed to open input file:", INFILE_PATH)
-    exit(-1)
+source_codents = open_file(None, INFILE_PATH)
 
 parsed_tokens = get_purified_tokens(source_codents, INFILE_PATH)
 tokens = Manager(parsed_tokens)
@@ -724,6 +743,8 @@ def get_importance(token):
         if tkname in op:
             return idx+1
     return 0
+
+primary_importance = get_importance([0,0,0,"."])-1;
 
 def iprint(indent, *children, **kwchildren):
     print("| "*indent, *children, *kwchildren)
@@ -1141,24 +1162,25 @@ def parse_inclusion(node) -> Node:
         if not represents_string(filepath_tk[-1]):
             parser_error(filepath_tk, "the file name has to be a string")
         
-        filepath_rel = Path(filepath_tk[-1][1:-1])
-        if is_local:
-            filepath = cwd.joinpath(filepath_rel).__str__()
+        filepath_str = filepath_tk[-1][1:-1]
+        filepath_rel = Path(filepath_str)
+        if not (filepath_str.startswith("https://") or filepath_str.startswith("http://")):
+            if is_local:
+                filepath = cwd.joinpath(filepath_rel).__str__()
+            else:
+                filepath = libs.joinpath(filepath_rel).__str__()
         else:
-            filepath = libs.joinpath(filepath_rel).__str__()
+            filepath = filepath_str
         
-        if filepath in included_files:
+        if filepath_rel.name in included_files:
             ...
             # parser_error(filepath_tk, "double inclusion, the first inclusion is the only one used", 0)
         
         else:
-            included_files.append(filepath)
+            included_files.append(filepath_rel.name)
             og_tokens = tokens
-            try:
-                with open(filepath, "r") as fp:
-                    contents = fp.read()
-            except Exception as e:
-                parser_error(filepath_tk, f"failed to open file &t while trying to include - {e}")
+
+            contents = open_file(filepath_tk, filepath)
             
             parsed_tokens = get_purified_tokens(contents, filepath)
             
@@ -1189,7 +1211,10 @@ def parse_primary():
     if token[-1].isnumeric():
         node.kind = kind.NUM_LIT
         node.tn = ftn(sw_type.INT, 0)
-        
+    
+    elif token[-1] == ";":
+        node.kind = kind.NULL
+
     elif represents_string(token[-1]):
         node.kind = kind.STR_LIT
         escaped_string = llvm_escape(node.tkname())
@@ -1200,7 +1225,7 @@ def parse_primary():
         
     elif token[-1] in human_unarys:
         node.kind = kind.UNARY
-        node.block = parse_primary()
+        node.block = parse_expression(primary_importance)
         
     elif token[-1] == "(":
         node.kind = kind.EXPRESSION
@@ -1257,7 +1282,7 @@ def parse_primary():
 
     elif token[-1] == "*":
         node.kind = kind.REFPTR
-        node.block = parse_primary()
+        node.block = parse_expression(primary_importance)
         node.tn = node.block.tn.copy()-1
     
     elif token[-1] == "@":

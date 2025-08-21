@@ -79,11 +79,6 @@ macro TODO(__random_shit) {
     panic "Not implemented yet."
 }
 
-macro salloc(size) {{
-    reserve size as __stack_alloced@size;
-    __stack_alloced@size;
-};}
-
 ptr void nullptr = 0
 ptr void NULL = 0
 bool true = 1
@@ -270,8 +265,8 @@ func String str_substr(String str, int pos, int end) {
 
 func void str_lstrip(ptr String str) {
     int pos = 0;
-    for(int i = 0, i < *str.length, ++i, {
-        if is_space(*str.items[i]) {
+    for(int i = 0, i < str.length, ++i, {
+        if is_space(str.items[i]) {
             pos++;
         } else {
             if pos {

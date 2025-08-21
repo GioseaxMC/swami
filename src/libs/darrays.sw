@@ -50,9 +50,11 @@ macro da_from_ptr(da, _ptr, _len) {
 
 macro da_begin(da) { (da).items; }
 
-macro da_end(da) {  &((da).items[(da).length]); }
+macro da_end(da) { &((da).items[(da).length]); }
 
-macro da_last(da) {  &((da).items[(da).length-1]); }
+macro da_last(da) { &((da).items[(da).length-1]); }
+
+macro da_sizeof(da) { sizeof(*(da).items)*(da).length; }
 
 macro foreach(da, _iter_n, body) {{
     _iter_n = da_begin(da);
