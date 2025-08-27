@@ -79,7 +79,7 @@ macro da_remove(da, idx) {{
 };}
 
 macro da_remove_unordered(da, idx) {{
-    (da).items[idx] = *da_end(da);
+    (da).items[idx] = *da_last(da);
     (da).length--;
 };}
 
@@ -98,7 +98,7 @@ macro da_find_if(da, name, body) {
 }
 
 macro da_dist(da, _ptr) {
-    cast _op_ptr(da_begin(da),-,_ptr) as int/sizeof(*da_begin(da));
+    cast _op_ptr(_ptr,-,da_begin(da)) as int/sizeof(*da_begin(da));
 }
 
 macro dynamic_array(type, name) {
