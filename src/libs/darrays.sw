@@ -3,6 +3,11 @@ extern ptr void malloc(int)
 
 extern void memcpy(ptr void, ptr void, int)
 
+macro _op_ptr(p1, s, p2) {
+    cast cast p1 as int s cast p2 as int
+    as ptr void;
+}
+
 macro da_reserve(da, new_size) {
     if (da).capacity < new_size {
         (da).capacity = new_size;
@@ -83,6 +88,17 @@ macro da_free(da) {
     (da).items = NULL;
     (da).length = 0;
     (da).capacity = 0;
+}
+
+macro da_find_if(da, name, body) {
+    foreach(da, name, {
+        if (body) break;
+    });
+    name;
+}
+
+macro da_dist(da, _ptr) {
+    cast _op_ptr(da_begin(da),-,_ptr) as int/sizeof(*da_begin(da));
 }
 
 macro dynamic_array(type, name) {

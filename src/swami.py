@@ -161,7 +161,6 @@ BL = "╰"
 known_files = {}
 def open_file(token: tuple|None, filename: str) -> str:
     if filename in known_files:
-        print("Known: ", filename);
         return known_files[filename]
 
     try:
@@ -1471,7 +1470,7 @@ def parse_expression(importance): # <- wanted to write priority
             case ".":
                 right_node = parse_expression(get_importance(op_token))
 
-                if right_node.kind in (kind.WORD, kind.VARREF):
+                if right_node.kind in (kind.WORD, kind.VARREF, kind.FUNCREF):
                     right_node.kind = kind.STRUCTFIELD
 
                     if not node.tn.isstruct():
@@ -1860,7 +1859,7 @@ def compile_node(node, level, assignable = 0):
             elif node.tkname() == "(": # FUNCALL
                 if dest_node.kind == kind.WORD:
                     dest_node = funcref_from_word(dest_node)
-                dest = compile_node(dest_node, level, 1)
+                dest = compile_node(dest_node, level)
                 node.tn = dest_node.tn.simple()
                 if dest in ("@va_start", "@va_end", "@va_copy"):
                     to_call = "@llvm."+dest[1:]
