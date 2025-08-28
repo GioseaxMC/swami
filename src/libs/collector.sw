@@ -25,8 +25,10 @@ MemChunks mcs;
 
 struct GarbageCollector {
     ptr void stack_tail,
+    int last_length,
+    int threshold,
     ptr void (int) ptr alloc,
-    ptr void (ptr void) ptr free,
+    ptr void (ptr void) ptr dealloc,
     void () ptr collect,
     void () ptr end,
 }
@@ -34,28 +36,47 @@ struct GarbageCollector {
 GarbageCollector gc;
 
 macro gc_init() {{
-    int __started_gc;
-    gc.stack_tail = &__started_gc;
-    gc.alloc = gc_alloc;
-    gc.free = gc_free;
-    gc.collect = gc_garbage_collect;
-    gc.end = gc_end;
+    int __started_gc__;
+    if not gc.stack_tail {
+        gc.stack_tail = &__started_gc__;
+        gc.threshold = 2;
+        gc.alloc = gc_alloc;
+        gc.dealloc = gc_dealloc;
+        gc.collect = gc_garbage_collect;
+        gc.end = gc_end;
+    };
+    macro malloc(__alloca_size__) { gc.alloc(__alloca_size__); };
+    macro realloc(original, size) {
+        gc_realloc(original, size);
+    };
+    macro free  (__alloca_ptrr__) { gc .dealloc(__alloca_ptrr__); };
     &mcs;
 };}
 
 func ptr void gc_alloc(int size) {
     mc = mc_malloc(size);
     da_append(mcs, mc);
+    if (mcs.length >= gc.last_length*gc.threshold) {
+        gc.collect();
+        gc.last_length = mcs.length;
+    };
     return mc.memory;
 }
 
-func void gc_free(ptr void pointer) {
+func ptr void gc_realloc(ptr void og, int size) {
+    ret = gc.alloc(size);
+    memcpy(ret, og, size);
+    gc.dealloc(og);
+    ret;
+}
+
+func void gc_dealloc(ptr void pointer) {
     result = da_find_if(mcs, $, {
         op_ptr(pointer,==,$.memory);
     });
 
     if op_ptr(result,==,da_end(mcs)) {
-        printf("Cannot free %p as it was not allocated with gc.alloc()\n", pointer);
+        printf("Cannot dealloc %p as it was not allocated with gc.alloc()\n", pointer);
         exit(-1);
     };
     
@@ -106,7 +127,7 @@ func void gc_garbage_collect() {
 
     printf("stack pointers: %i\nheap pointers: %i\n", res);
 
-    for(i=0, i<mcs.length, i++, { # free unreachables
+    for(i=0, i<mcs.length, i++, { # dealloc unreachables
         if !(mcs.items[i].seen) {
             freed++;
             free(mcs.items[i].memory);
@@ -132,11 +153,18 @@ func void gc_end() {
     da_free(mcs);
 }
 
-macro gc_collected(body) {{
-    gc_init();
+macro gc_defer(defer, body) {{
     body;
-    gc.end();
+    defer;
 };}
 
+macro gc_collected(body) {
+    gc_defer(gc.end(), body);
+}
 
-
+macro fun(funcstuff__, body__) {
+    func funcstuff__ {
+        gc_init();
+        gc_collected(body__);
+    };
+}

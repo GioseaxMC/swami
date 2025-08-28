@@ -267,6 +267,7 @@ human_unarys = [
     "+",
     "-",
     "!",
+    "not",
 ]
 
 def uisalnum(s: str) -> bool:
@@ -857,11 +858,11 @@ def parse_type(tn):
             if tokens.current()[-1] != ")":
                 tokens.expect(",")
         tokens.expect(")")
-    if tokens.current()[-1] == "[":
-        parser_error(tokens.current(), "Invalid type")
-        tokens.consume()
-        tn.count = int(tokens.consume()[-1])
-        tokens.expect("]")
+    # if tokens.current()[-1] == "[":
+    #     parser_error(tokens.current(), "Invalid type")
+    #     tokens.consume()
+    #     tn.count = int(tokens.consume()[-1])
+    #     tokens.expect("]")
     while tokens.current()[-1] == human_type[sw_type.PTR]:
         tokens.consume()
         tn.outptrl += 1
@@ -960,6 +961,7 @@ def parse_macro_call():
     global tokens, parse_indentation
     node = Node()
     node.token = tokens.prev()
+    macro_call_stack.append(node);
     macro_args = []
     tokens.expect("(")
     while tokens.current()[-1] != ")":
@@ -1013,6 +1015,7 @@ def parse_macro_call():
     parse_indentation = old_pi
 
     tokens = og_tokens
+    macro_call_stack.pop()
     return node;
 
 def parse_block():
@@ -1415,15 +1418,14 @@ def parse_primary():
         node.kind = kind.VARREF
         parse_varref(node)
 
-    elif token[-1] in state.declared_funcs:
-        node.kind = kind.FUNCREF
-        parse_funcref(node)
-        
-
-    elif token[-1] in state.declared_macros:
+    elif token[-1] in state.declared_macros and (not len(macro_call_stack) or macro_call_stack[-1].token[-1] != token[-1]):
         node = parse_macro_call()
         node.kind = kind.BLOCK
         node.token = token
+
+    elif token[-1] in state.declared_funcs:
+        node.kind = kind.FUNCREF
+        parse_funcref(node)
 
     elif tokenizable(token[-1]):
         if parse_indentation:
@@ -1689,7 +1691,7 @@ def compile_node(node, level, assignable = 0):
                     return result
                 else:
                     out_writeln(f"%{iota()} = sub {rlt(node.block.tn)} 0, {result}", level)
-            elif node.tkname() == "!":
+            elif node.tkname() in ("!", "not"):
                 # result = cast(result, node.block.tn, ftn(sw_type.INT, 0), level)[0]
                 out_writeln(f"%{iota()} = icmp eq {rlt(node.block.tn)} {result}, {node.block.tn.get_zero()}", level)
                 node.tn = ftn(sw_type.BOOL, 0)

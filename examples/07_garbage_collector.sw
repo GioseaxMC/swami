@@ -1,5 +1,5 @@
-include { "gcwami.sw" }
 include { "stdlib.sw" }
+include { "collector.sw" }
 
 func int main() {
     gc_init();
