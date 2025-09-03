@@ -57,6 +57,11 @@ extern int fprintf(ptr void, ptr char, <>)
 extern void write(int, ptr char, int)
 extern int read(int, ptr char, int)
 
+@windows extern int Sleep(int)
+@windows macro sleep(time) { Sleep(time); }
+@linux extern int usleep(int)
+@linux macro sleep(time) { usleep(time*1000); }
+
 macro for(decl, cond, inc, body) {{
     decl;
     while (cond) { body; inc; };

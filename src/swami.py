@@ -557,6 +557,8 @@ class kind:
     STRUCTFIELD = iota()
     LIST_LIT = iota()
 
+    PANIC = iota()
+
     NULL = iota()
 
 human_kind = [
@@ -603,6 +605,8 @@ human_kind = [
     "continue"
     "struct field",
     "list literal",
+
+    "panic",
 
     "null",
 ]
@@ -677,6 +681,8 @@ class Manager:
     
     def consume(self):
         self.pointer+=1
+        if len(self.items) < self.pointer:
+            parser_error(self.items[-1], "Consume can't consume anymore")
         return self.items[self.pointer-1]
     
     def assume(self, str):
@@ -802,7 +808,7 @@ def get_max_size(tn: typenode): # in bytes please
     return sizeof(tn)
 
 def type_cmp(type1, type2):
-    if type1.ptrl and type2.ptrl:
+    if type1.isptr() and type2.isptr():
         return 1
     else:
         cond = 1
@@ -1044,6 +1050,9 @@ def parse_funcdecl(node):
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid function name")
+    if node.tkname() in state.declared_funcs:
+        parser_error(state.declared_funcs[node.tkname()].token, "Previously declared here", 0);
+        parser_error(node.token, "Cannot redeclare function")
     state.declared_funcs[node.tkname()] = node
     state.func_namespaces[node.tkname()] = {}
     state.current_namespace = state.func_namespaces[node.tkname()]
@@ -1231,7 +1240,10 @@ def parse_primary():
         
     elif token[-1] == "(":
         node.kind = kind.EXPRESSION
-        node.children.append(parse_expression(0))
+        while tokens.current()[-1] != ")":
+            node.children.append(parse_expression(0))
+            if tokens.current()[-1] != ")":
+                tokens.expect(",");
         node.tn = node.children[-1].tn.copy()
         tokens.expect(")")
 
@@ -1347,13 +1359,11 @@ def parse_primary():
             # args.b += f" {node.string_val[1:-1]} "
     
     elif token[-1] == "panic":
-        msg = tokens.consume()[-1]
-        if represents_string(msg):
-            msg = msg[1:-1]
-        if len(macro_call_stack):
-            compiler_error(macro_call_stack.pop(), msg)
-        else:
-            compiler_error(node, msg)
+        node.kind = kind.PANIC
+
+        node.string_val = tokens.consume()[-1]
+        if represents_string(node.string_val):
+            node.string_val = node.string_val[1:-1]
 
     elif token[-1] == "++":
         node.kind = kind.INC
@@ -1608,6 +1618,12 @@ def compile_node(node, level, assignable = 0):
             compiler_error(node, f"cannot treat '{human_kind[node.kind]}' as lvalue.")
 
     match node.kind:
+        case kind.PANIC:
+            if len(macro_call_stack):
+                compiler_error(macro_call_stack.pop(), node.string_val)
+            else:
+                compiler_error(node, node.string_val)
+
         case kind.EXPRESSION:
             for arg in node.children:
                 arg_names.append(compile_node(arg, level, assignable))
@@ -2102,6 +2118,7 @@ def compile_node(node, level, assignable = 0):
                     out_write(", ", level)
                 out_write(f"{rlt(arg.tn)}", level)
             out_writeln("}", level)
+            return "zeroinitializer";
         
         case kind.IF:
             compiled_node = compile_node(node.block, nlevel)
