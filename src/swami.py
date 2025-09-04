@@ -27,6 +27,8 @@ parser.add_argument('-o', help="The output file for both the .ll file and the ex
 parser.add_argument('-emit-llvm', action='store_true', help="Emit the generated llvm ir")
 parser.add_argument('-b', help="Custom flags directly passed to the backend", default="")
 
+parser.add_argument('-run', action="store_true", help="Run and remove the compiled program (its not intepretation.)")
+
 import struct
 word_bytes = struct.calcsize("P")
 parser.add_argument('-word-size', help="The word size in bytes of the outputted binary", default=word_bytes)
@@ -506,7 +508,6 @@ if argc <= 1:
     # debug("  - [required argument]")
     # debug("  - <optional argument> defaults to main")
     # debug("")
-
 
 OUTFILE_PATH = args.o.removesuffix(".ll")+".ll"
 INFILE_PATH = args.sourcecode.removesuffix(".sw")+".sw"
@@ -2226,10 +2227,28 @@ compile_nodes(nodes)
 out.close()
 
 args.b = args.b + " " + " ".join(state.declared_params)
-compiler_call = f"{args.backend} {OUTFILE_PATH} -o {OUTFILE_PATH.removesuffix('.ll')} -Wno-override-module {args.b}"
+EXECUTABLE_FILE = OUTFILE_PATH.removesuffix('.ll') + (".exe" if os_name == "windows" else "")
+compiler_call = f"{args.backend} {OUTFILE_PATH} -o {EXECUTABLE_FILE} -Wno-override-module {args.b}"
 
 verbose("[INFO]: compiler call:", compiler_call)
 
 os.system(compiler_call)
 if not args.emit_llvm:
-    os.system(f"del {OUTFILE_PATH}")
+    if os_name == "windows":
+        os.system(f"del {OUTFILE_PATH}")
+    else:
+        os.system(f"rm {OUTFILE_PATH}")
+
+if args.run:
+    if os_name == "windows":
+        run_call = EXECUTABLE_FILE
+    else:
+        run_call = "./"+EXECUTABLE_FILE
+    verbose("[INFO]: run call:", run_call)
+    os.system(run_call)
+    verbose("[INFO]: removing temporary script executable")
+    if os_name == "windows":
+            os.system(f"del {EXECUTABLE_FILE}")
+    else:
+        os.system(f"rm {EXECUTABLE_FILE}")
+
