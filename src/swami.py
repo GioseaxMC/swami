@@ -1242,7 +1242,9 @@ def parse_primary():
     elif token[-1] == "(":
         node.kind = kind.EXPRESSION
         while tokens.current()[-1] != ")":
-            node.children.append(parse_expression(0))
+            n = parse_expression(0)
+            if n.kind != kind.NULL:
+                node.children.append(n)
             if tokens.current()[-1] != ")":
                 tokens.expect(",");
         node.tn = node.children[-1].tn.copy()
@@ -1429,7 +1431,7 @@ def parse_primary():
         node.kind = kind.VARREF
         parse_varref(node)
 
-    elif token[-1] in state.declared_macros and (not len(macro_call_stack) or macro_call_stack[-1].token[-1] != token[-1]):
+    elif token[-1] in state.declared_macros: # and (not len(macro_call_stack) or macro_call_stack[-1].token[-1] != token[-1]):
         node = parse_macro_call()
         node.kind = kind.BLOCK
         node.token = token
