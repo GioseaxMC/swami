@@ -1,5 +1,6 @@
 include {
-    "stdlib.sw"
+    "stdlib.sw",
+    "threads.sw"
 }
 
 extern int socket(i16, i16, int)
@@ -8,6 +9,7 @@ extern void bind(int, ptr void, int)
 extern void listen(int, int)
 extern int accept(int, ptr void, ptr void)
 extern void recv(int, ptr char, int, int)
+extern void send(int, ptr char, int)
 
 i16 AF_INET = 2;
 i16 SOCK_STREAM = 1;
@@ -24,7 +26,23 @@ struct Addr {
     i64 sin_zero,
 }
 
+func void worker() {
+    for(i=0, i<100, i++, {
+        printf("Worker %i\n", i);
+    });
+}
+
 func int main() {
+
+    t = _makeThread(worker, NULL);
+    printf("Later\n");
+    for(i=0, i<100, ++i, {
+        printf("mainer: %i\n", i);
+    });
+    
+    _waitAndClose(t, NULL);
+
+    return 0;
 
     Addr address;
     addrlen = sizeof(address);
@@ -47,5 +65,5 @@ func int main() {
     recv(client_fd, buffer, 1024, 0);
     printf("Client says: %s\n", buffer);
 
-
+    send(client_fd, buffer, strlen(buffer));
 }
