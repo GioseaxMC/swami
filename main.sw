@@ -34,13 +34,13 @@ func void worker() {
 
 func int main() {
 
-    t = _makeThread(worker, NULL);
+    t = makeThread(worker, NULL);
     printf("Later\n");
     for(i=0, i<100, ++i, {
         printf("mainer: %i\n", i);
     });
     
-    _waitAndClose(t, NULL);
+    waitAndClose(t, NULL);
 
     return 0;
 

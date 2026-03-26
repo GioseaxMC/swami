@@ -7,23 +7,23 @@ struct Thread {
 
 @linux include { "linthread.sw" }
 
-@linux func Thread _makeThread(ptr void func_pointer, ptr void arg) {
+@linux func Thread makeThread(ptr void func_pointer, ptr void arg) {
     Thread thread;
     pthread_create(&thread.pthread, cast 0 as ptr void, func_pointer, arg);
     return thread;
 }
 
-@linux func void _waitThread(Thread t, ptr void res) {
+@linux func void waitThread(Thread t, ptr void res) {
     pthread_join(t.pthread, res);
 }
 
-@linux func void _closeThread(Thread t) {
+@linux func void closeThread(Thread t) {
     return void;
 }
 
-@linux func void _waitAndClose(Thread t, ptr void res) {
-    _waitThread(t, res);
-    _closeThread(t);
+@linux func void waitAndClose(Thread t, ptr void res) {
+    waitThread(t, res);
+    closeThread(t);
 }
 # windows
 

@@ -626,6 +626,7 @@ class compiler_state:
         self.declared_macros: dict[str, Node] = {}
         
         self.current_namespace = self.global_vars
+
     
 state = compiler_state()
 
@@ -633,6 +634,7 @@ node_stack: list[Node] = []
 macro_call_stack: list[Node] = []
 func_info_stack: list[typenode] = []
 loop_stack: list[int] = []
+compiled_func_decls: list[str] = []
 
 def add_usr_var(node, parse_indentation):
     global state
@@ -1051,9 +1053,9 @@ def parse_funcdecl(node):
     node.token = tokens.consume()
     if not tokenizable(node.tkname()):
         parser_error(node.token, "Invalid function name")
-    if node.tkname() in state.declared_funcs:
-        parser_error(state.declared_funcs[node.tkname()].token, "Previously declared here", 0);
-        parser_error(node.token, "Cannot redeclare function")
+    #if node.tkname() in state.declared_funcs:
+    #    parser_error(state.declared_funcs[node.tkname()].token, "Previously declared here", 0);
+    #    parser_error(node.token, "Cannot redeclare function")
     state.declared_funcs[node.tkname()] = node
     state.func_namespaces[node.tkname()] = {}
     state.current_namespace = state.func_namespaces[node.tkname()]
@@ -1877,7 +1879,7 @@ def compile_node(node, level, assignable = 0):
                     compile_incdec(ret_val, f"%{iota(-1)-1}", src_node.block.kind, node, level)
                 return ret_val
 
-            elif node.tkname() == "(": # FUNCALL
+            elif node.tkname() == "(": # FUNCALL, funcall, FUNCCALL, funccall
                 if dest_node.kind == kind.WORD:
                     dest_node = funcref_from_word(dest_node)
                 dest = compile_node(dest_node, level)
@@ -2089,6 +2091,11 @@ def compile_node(node, level, assignable = 0):
         case kind.FUNCDECL:
             state.current_namespace = state.func_namespaces[node.tkname()]
             func_info_stack.append(node.tn)
+            if node.tkname() in compiled_func_decls:
+                parser_error(state.declared_funcs[node.tkname()].token, "Previously declared here", 0);
+                parser_error(node.token, "Cannot redeclare function")
+            else:
+                compiled_func_decls.append(node.tkname())
 
             iota_counter = -1
             out_write(f"define {rlt(node.tn)} @{node.tkname()}(", level)
