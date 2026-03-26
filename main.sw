@@ -26,21 +26,23 @@ struct Addr {
     i64 sin_zero,
 }
 
-func void worker() {
-    for(i=0, i<100, i++, {
-        printf("Worker %i\n", i);
-    });
+func ptr int worker(ptr int arg) {
+    int x = *arg;
+    x=x*2;
+    return cast x as ptr int;
 }
 
-func int main() {
 
-    t = makeThread(worker, NULL);
-    printf("Later\n");
-    for(i=0, i<100, ++i, {
-        printf("mainer: %i\n", i);
-    });
+func int main() {
     
-    waitAndClose(t, NULL);
+    value = 21;
+
+    t = makeThread(worker, &value);
+
+    int res;
+    waitAndClose(t, &res);
+
+    printf("res: %d\n", res);
 
     return 0;
 

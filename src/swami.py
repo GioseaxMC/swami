@@ -431,6 +431,12 @@ class typenode:
         new.count = 0
         new.children = []
         return new
+    
+    def check_valid(self):
+        if len(self.children) and not self.outptrl:
+            parser_error(self.token, "function type has to be pointer type (add ptr at the end of type)");
+        if self.outptrl and not len(self.children):
+            parser_error(self.token, "wrong syntax, pointer type must be declared as 'ptr type'");
 
     def __add__(self, n):
         new = typenode()
@@ -559,6 +565,8 @@ class kind:
     LIST_LIT = iota()
 
     PANIC = iota()
+    ADEC = iota()
+    AINC = iota()
 
     NULL = iota()
 
@@ -1155,7 +1163,7 @@ def parse_varref(node):
     
     var_info = namespace[node.tkname()]
     node.tn = var_info.tn.copy()
-    node.block = parse_incdec()
+    # node.block = parse_incdec()
 
 included_files: list[str] = []
 def parse_inclusion(node) -> Node:
@@ -1422,8 +1430,9 @@ def parse_primary():
 
     elif token[-1] in human_type:
         node.kind = kind.VARDECL
-        tokens.goback() # no one will see this...
+        tokens.goback() # no one will see this... what was i thinking bruh
         parse_type(node.tn)
+        node.tn.check_valid()
         if uisalnum(tokens.current()[-1]):
             node = parse_vardecl(node)
         else:
@@ -1445,7 +1454,6 @@ def parse_primary():
     elif tokenizable(token[-1]):
         if parse_indentation:
             node.kind = kind.WORD
-            node.block = parse_incdec()
         else:
             parser_error(token, "Unknown instruction '&t'")
 
@@ -1485,7 +1493,7 @@ def parse_expression(importance): # <- wanted to write priority
                     node.kind = kind.VARDECL
                     add_usr_var(node, parse_indentation)
             case ".":
-                right_node = parse_expression(get_importance(op_token))
+                right_node = parse_primary() #(get_importance(op_token))
 
                 if right_node.kind in (kind.WORD, kind.VARREF, kind.FUNCREF):
                     right_node.kind = kind.STRUCTFIELD
@@ -1504,7 +1512,15 @@ def parse_expression(importance): # <- wanted to write priority
         op_node.children.append(right_node)
         node = op_node
     
+    if parse_indentation and not node.block:
+        incdec_node = parse_incdec()
+        if incdec_node:
+            incdec_node.block = node;
+            node = incdec_node;
+
+    
     parse_indentation += -1
+
     return node
 
 parse()
@@ -1788,6 +1804,22 @@ def compile_node(node, level, assignable = 0):
             
             return ret_val
         
+        case kind.AINC:
+            dest = compile_node(node.block, level, 1)
+            node.tn = node.block.tn
+            out_writeln(f"%{iota()} = load {rlt(node.block.tn-1)}, ptr {dest}", level)
+            out_writeln(f"%{iota()} = add {rlt(node.block.tn-1)} %{iota(-1)-1}, 1", level)
+            out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
+            return f"%{iota(-2)}"
+
+        case kind.ADEC:
+            dest = compile_node(node.block, level, 1)
+            node.tn = node.block.tn
+            out_writeln(f"%{iota()} = load {rlt(node.block.tn-1)}, ptr {dest}", level)
+            out_writeln(f"%{iota()} = sub {rlt(node.block.tn-1)} %{iota(-1)-1}, 1", level)
+            out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
+            return f"%{iota(-2)}"
+        
         case kind.INC:
             dest = compile_node(node.block, level, 1)
             node.tn = node.block.tn
@@ -1815,7 +1847,7 @@ def compile_node(node, level, assignable = 0):
                 node.tn = dest_node.tn
                 if src_node.tn.isptr() and dest_node.tn.isptr() and dest_node.tn.type == sw_type.CHAR:
                     out_writeln(f"store ptr {src}, ptr {dest}", level)
-                elif src_node.kind == kind.NUM_LIT:
+                elif src_node.kind == kind.NUM_LIT: # TODO: this was commented out, figure out why
                     out_writeln(f"store {rlt(dest_node.tn)} {src}, ptr {dest}", level)
                 elif not type_cmp(src_node.tn, dest_node.tn):
                     compiler_error(node, f"Types don't match in assignment '{hlt(dest_node.tn)}' != '{hlt(src_node.tn)}'")
