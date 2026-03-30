@@ -1,71 +1,46 @@
 include {
-    "stdlib.sw",
-    "threads.sw"
+    "stdlib.sw"
 }
 
-extern int socket(i16, i16, int)
-extern i16 htons(int)
-extern void bind(int, ptr void, int)
-extern void listen(int, int)
-extern int accept(int, ptr void, ptr void)
-extern void recv(int, ptr char, int, int)
-extern void send(int, ptr char, int)
-
-i16 AF_INET = 2;
-i16 SOCK_STREAM = 1;
-i32 INADDR_ANY = 0;
-
-struct Addr_in {
-    i32 s_addr,
+macro __fmt(type) {
+    generic(type,
+        bool: "%d",
+        int: "%d",
+        i16: "%hd",
+        i32: "%ld",
+        i64: "%lld",
+        char: "%c",
+        ptr char: "%s",
+        ptr void: "%p",
+        default: "%%?"
+    );
 }
 
-struct Addr {
-    i16 sin_family,
-    i16 sin_port,
-    Addr_in sin_addr,
-    i64 sin_zero,
+macro __tern(cond, _t, _f) {
+    cast (cond) as int *(_t) + cast (!cond) as int *(_f);
 }
 
-func ptr int worker(ptr int arg) {
-    int x = *arg;
-    x=x*2;
-    return cast x as ptr int;
+macro __print_one(x) {
+    generic(x,
+        bool: printf("%s", __tern(x, "true", "false")),
+        default: printf(__fmt(x), x)
+    );
 }
 
+macro __print_oneln(x) {
+    __print_one(x);
+    printf("\n");
+}
 
 func int main() {
-    
-    value = 21;
 
-    t = makeThread(worker, &value);
-
-    int res;
-    waitAndClose(t, &res);
-
-    printf("res: %d\n", res);
+    __print_oneln(67);
+    __print_oneln(true);
+    __print_oneln("Hello World!");
+    __print_oneln(cast 45 as i16);
+    __print_oneln(cast 45 as i32);
+    __print_oneln(*"Giose");
+    __print_oneln(SS("sigma"));
 
     return 0;
-
-    Addr address;
-    addrlen = sizeof(address);
-    reserve 1024 as buffer;
-
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    
-    PORT = 6767;
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
-
-    bind(server_fd, &address, sizeof(address));
-    listen(server_fd, 0);
-
-    printf("Server listening on port %i...\n", PORT);
-
-    client_fd = accept(server_fd, &address, &addrlen);
-    
-    recv(client_fd, buffer, 1024, 0);
-    printf("Client says: %s\n", buffer);
-
-    send(client_fd, buffer, strlen(buffer));
 }

@@ -483,6 +483,7 @@ class Node:
         self.children: list[Node] = []
         self.tn: typenode = typenode()
         self.block = None
+        self.custom_data = None
         # self.name = ""
 
     def find_by_name(self, name, node):
@@ -568,6 +569,8 @@ class kind:
     ADEC = iota()
     AINC = iota()
 
+    GENERIC = iota()
+
     NULL = iota()
 
 human_kind = [
@@ -616,6 +619,10 @@ human_kind = [
     "list literal",
 
     "panic",
+    "after decrement",
+    "after increment",
+
+    "generic",
 
     "null",
 ]
@@ -1221,7 +1228,42 @@ def parse_inclusion(node) -> Node:
         
     tokens.expect(closer)
     return node
+
+def parse_generic():
+    node = Node()
+    node.kind = kind.GENERIC
+    node.token = tokens.prev()
+    tokens.expect("(")
+    node.block = parse_expression(0)
+    node.custom_data = []
+    tokens.expect(",")
+    default_node = None
+    while tokens.current()[-1] != ")":
+        if tokens.current()[-1] != "default":
+            tn = typenode()
+            parse_type(tn)
+            node.custom_data.append(tn)
+            tokens.expect(":")
+            expr = parse_expression(0)
+            if type_cmp(tn, node.block.tn) and type_cmp(tn.base(), node.block.tn.base()):
+                node.tn = expr.tn
+            node.children.append(expr)
+        else:
+            tokens.consume()
+            tokens.expect(":")
+            default_node = parse_expression(0)
+        # tokens.consume()
+        if tokens.current()[-1] != ")":
+            tokens.expect(",")
+    tokens.expect(")")
+
+    if not node.tn:
+        node.tn = default_node.tn
+    if default_node:
+        node.children.append(default_node)
     
+    return node
+
 def parse_primary():
     global state
     
@@ -1298,7 +1340,7 @@ def parse_primary():
         tokens.expect("]")
     
     elif token[-1] == "{":
-        node.kind = kind.BLOCK
+        # node.kind = kind.BLOCK
         tokens.goback()
         node = parse_block()
     
@@ -1348,6 +1390,9 @@ def parse_primary():
         else:
             ...
     
+    elif token[-1] == "generic":
+        node = parse_generic()
+
     elif token[-1] == "reserve":
         node.kind = kind.RESERVE
         size_tk = tokens.consume()
@@ -1835,6 +1880,18 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"%{iota()} = sub {rlt(node.block.tn-1)} %{iota(-1)-1}, 1", level)
             out_writeln(f"store {rlt(node.block.tn-1)} %{iota(-1)}, ptr {dest}", level)
             return f"%{iota(-1)}"
+
+        case kind.GENERIC:
+            compile_node(node.block, level)
+            default_case = node.children.pop()
+            for expr, nwt in zip(node.children, node.custom_data):
+                if type_cmp(nwt, node.block.tn):
+                    ret = compile_node(expr, level)
+                    node.tn = expr.tn
+                    return ret
+            ret = compile_node(default_case, level)
+            node.tn = default_case.tn
+            return ret        
 
         case kind.OPERAND:
             if node.tkname() == "=":
