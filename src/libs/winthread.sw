@@ -32,7 +32,7 @@ func void waitThread(Thread t, ptr void res) {
     WaitForSingleObject(t.handle, INFINITY);
     ctx = cast t.windows_context as ptr WinThreadContext;
     ptr ptr void _res = res;
-    *_res = ctx.out;
+    if res {*_res = ctx.out;};
 }
 
 func void closeThread(Thread t) {

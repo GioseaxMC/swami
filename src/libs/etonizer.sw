@@ -47,7 +47,7 @@ func void add_token(ptr TokenList list, ptr char file, int line, int pos, ptr ch
     list.tokens[list.size].file = file;
     list.tokens[list.size].line = line;
     list.tokens[list.size].row = pos;
-    *list.size++;
+    list.size++;
 }
 
 func void free_token_list(ptr TokenList list) {
@@ -172,7 +172,7 @@ func Token current(ptr TokenList ls) {
 }
 
 func Token consume(ptr TokenList ls) {
-    return ls.tokens[*ls.index++];
+    return ls.tokens[ls.index++];
 }
 
 func Token peek(ptr TokenList ls) {

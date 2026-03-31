@@ -5,6 +5,8 @@ include {
 
 func int main(int argc, ptr ptr char argv) {
     args = args_as_da(argc, argv);
+    
+    sigmafuckingball();
 
     surl_init({
         printf("Couldn't initialize surl\n");

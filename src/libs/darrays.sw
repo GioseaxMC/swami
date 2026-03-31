@@ -8,103 +8,63 @@ macro _op_ptr(p1, s, p2) {
     as ptr void;
 }
 
-macro da_reserve(da, new_size) {
-    if (da).capacity < new_size {
-        (da).capacity = new_size;
-        (da).items = realloc((da).items,
-            (da).capacity*sizeof(*((da).items)));
-    };
+struct Array_header {
+    int len,
+    int capacity,
+    i64 probe,
 }
 
-macro da_append(da, item) {
-    if (da).length >= ((da).capacity) {
-        if (da).capacity 
-            da_reserve(da, (da).capacity*2)
-        else
-            da_reserve(da, 16);
-    };
-    (da).items[(da).length] = (item);
-    ++((da).length);
+struct __caster {
+    Array_header ah,
+    ptr void data
+} 
+
+i64 ARR_SENTINEL = 59774906347
+int ARRAY_INIT_CAPACITY = 256
+
+macro array_data(arr) { cast _op_ptr(arr,+,sizeof(Array_header)) as ptr void; }
+macro arr_header(arr) { cast _op_ptr(arr,-,sizeof(Array_header)) as ptr Array_header; }
+
+func ptr void allocate_inited_array(int sizeof_item, int init_capacity) {
+    size = sizeof_item * init_capacity + sizeof(Array_header);
+    ptr Array_header array = malloc(size);
+    memset(array, 0, size);
+    array.capacity = init_capacity;
+    array.probe = ARR_SENTINEL;
+    array.len = 67; printf("676767\n");
+    printf("%p\n", &array.len);
+    return array_data(array);
 }
 
-# this is now 'useless', keeping it for legacy code
-    macro da_init(da) {
-        (da).items = cast 0 as ptr void;
-        (da).length = 0;
-        (da).capacity = 0;
-    }
-
-    macro da_make(da_t, da) {{
-        da_t da;
-        da_init(da);
-    };}
-# end
-
-macro da_len(da) {
-    ((da).length);
+macro new_array(type) { cast allocate_inited_array(sizeof(type), ARRAY_INIT_CAPACITY) as ptr type; }
+macro is_array(arr) {{ cast (arr) as bool && arr_header(arr).probe == ARR_SENTINEL; };}
+macro arr_len(arr) {{ arr_header(arr).len; };}
+macro arr_capacity(arr) {{ arr_header(arr).capacity; };}
+macro arr_start(arr) {{ arr; };}
+macro arr_end(arr) { (arr)+arr_len(arr)*sizeof(*arr); }
+macro arr_ensure(arr, new_size) {
+    (arr) = array_data(realloc(arr_header(arr), arr_capacity(arr)*2));
+    arr_capacity(arr) = new_size;
 }
-
-macro da_from_ptr(da, _ptr, _len) {
-    (da).items = malloc((_len) * sizeof(*_ptr));
-    (da).length = (_len);
-    (da).capacity = (_len);
-    
-    memcpy((da).items, _ptr, (_len)*sizeof(*_ptr));
-    da;
+macro arr_push(arr, item) {
+    if (!(arr)) { (arr) = allocate_inited_array(sizeof(*arr), ARRAY_INIT_CAPACITY); };
+    printf("string 0\n");
+    printf("arrptr: %p\n", arr);
+    printf("header: %p\n", &(arr_header(arr).len));
+    printf("lenptr: %p\n", &arr_len(arr));
+    arr_len(arr) = 3;
+    (arr)[arr_header(arr).len++] = (item);
+    printf("oo %p\n", arr);
+    if (arr_len(arr) >= arr_capacity(arr)) arr_ensure((arr), arr_capacity(arr)*2);
 }
-
-macro da_begin(da) { (da).items; }
-
-macro da_end(da) { &((da).items[(da).length]); }
-
-macro da_last(da) { &((da).items[(da).length-1]); }
-
-macro da_sizeof(da) { sizeof(*(da).items)*(da).length; }
+macro arr_unordered_remove(arr, index) { (arr)[index] = (arr)[--arr_len(arr)]; }
+macro arr_free(arr) { free(arr_header(arr)); }
 
 macro foreach(da, _iter_n, body) {{
-    _iter_n = da_begin(da);
-    while( cast _iter_n as int != cast da_end(da) as int ) {
+    _iter_n = arr_start(da);
+    while _op_ptr(_iter_n,!=,arr_end(da)) {
         body;
-        _iter_n = cast cast _iter_n as int + sizeof(*((da).items)) as ptr void;
+        _iter_n = _op_ptr(_iter_n,+,sizeof(*((da))));
     };
 };}
 
-macro da_remove(da, idx) {{
-    _iter_i = idx;
-    while( _iter_i < (da).length ) {
-        (da).items[_iter_i] = (da).items[_iter_i+1];
-        _iter_i++;
-    };
-    (da).length--;
-};}
-
-macro da_remove_unordered(da, idx) {{
-    (da).items[idx] = *da_last(da);
-    (da).length--;
-};}
-
-macro da_free(da) {
-    free((da).items);
-    (da).items = NULL;
-    (da).length = 0;
-    (da).capacity = 0;
-}
-
-macro da_find_if(da, name, body) {
-    foreach(da, name, {
-        if (body) break;
-    });
-    name;
-}
-
-macro da_dist(da, _ptr) {
-    cast _op_ptr(_ptr,-,da_begin(da)) as int/sizeof(*da_begin(da));
-}
-
-macro dynamic_array(type, name) {
-    struct name {
-        int length,
-        int capacity,
-        ptr type items,
-    };
-}

@@ -8,7 +8,7 @@ func void thread_func() {
 }
 
 func void main() {
-    t = makeThread(thread_func);
+    t = makeThread(thread_func, NULL);
 
     if not t.handle {
         printf("Create thread failed\n");
@@ -19,5 +19,5 @@ func void main() {
         printf("Sigma outer boi\n");
     });
 
-    waitAndClose(t);
+    waitAndClose(t, NULL);
 }

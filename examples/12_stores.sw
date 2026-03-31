@@ -19,7 +19,7 @@ func void proc() {
 }
 
 func void main() {
-    t = makeThread(proc);
+    t = makeThread(proc, NULL);
     
     sleep(1);
     st_subscribe(number, i, {
@@ -29,5 +29,5 @@ func void main() {
             printf("Main is the first\n");
     });
 
-    waitAndClose(t);
+    waitAndClose(t, NULL);
 }

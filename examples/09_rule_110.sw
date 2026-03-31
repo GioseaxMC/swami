@@ -16,16 +16,6 @@ macro init() {{
     top[100-1] = 1;
 };}
 
-func int pow(int base, int power) {
-    if !power return 1;
-    done = base;
-    i = power;
-    while --i {
-        done = done*base;
-    };
-    return done;
-}
-
 func int get_cell(int idx) {
     return cast (idx > 0 && idx < BufferSize) && cast top[idx] as bool as int;
 }

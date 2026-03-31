@@ -1,11 +1,23 @@
+ptr char sigma = "string 0\n";
+ptr char sigma_ = "string 1\n";
+ptr char sigma__ = "stirng 2\n";
+
 include {
     "flags.sw"
 }
 
 func int main(int argc, ptr ptr char argv) {
+
+
+    ParserArgs args;
+    args.length = argc;
+    args.items = argv;
+    
+
     parser = make_parser("Flags library test program");
 
     n = add_integer_arg(parser, "-n", "It's a number");
+    printf("outer probe\n");
     *n = 0;
 
     s = add_string_arg(parser, "-s", "It's a string");
@@ -14,7 +26,6 @@ func int main(int argc, ptr ptr char argv) {
     d = add_option(parser, "-d", "Do debugging");
     *d = 0;
 
-    args = args_as_da(argc, argv);
 
     parse_args(&parser, &args);
 

@@ -2,45 +2,26 @@ include {
     "stdlib.sw"
 }
 
-macro __fmt(type) {
-    generic(type,
-        bool: "%d",
-        int: "%d",
-        i16: "%hd",
-        i32: "%ld",
-        i64: "%lld",
-        char: "%c",
-        ptr char: "%s",
-        ptr void: "%p",
-        default: "%%?"
-    );
+struct Simple {
+    int x
 }
 
-macro __tern(cond, _t, _f) {
-    cast (cond) as int *(_t) + cast (!cond) as int *(_f);
-}
-
-macro __print_one(x) {
-    generic(x,
-        bool: printf("%s", __tern(x, "true", "false")),
-        default: printf(__fmt(x), x)
-    );
-}
-
-macro __print_oneln(x) {
-    __print_one(x);
-    printf("\n");
-}
+macro get_header(p) {{ (cast op_ptr(p,+,0) as ptr Simple); }; }
+macro get_x(p) {{ get_header(p).x; }; }
 
 func int main() {
+    Simple x;
+    ptr Simple px = &x;
+    
+    printf("lets try\n");
+    
+    px.x = 4;
 
-    __print_oneln(67);
-    __print_oneln(true);
-    __print_oneln("Hello World!");
-    __print_oneln(cast 45 as i16);
-    __print_oneln(cast 45 as i32);
-    __print_oneln(*"Giose");
-    __print_oneln(SS("sigma"));
+    min(3,2);
 
-    return 0;
+    printf("%p\n", &(px.x));
+
+    min(1,2);
+
+    printf("%p\n", &(get_header(px).x));
 }
