@@ -539,8 +539,12 @@ class kind:
     INC = iota()
     
     DEC = iota()
+    AINC = iota()
+    ADEC = iota()
+
     UNARY = iota()
     PTREF = iota()
+    PANIC = iota()
     
     GETPTR = iota()
     STRUCT = iota()
@@ -566,10 +570,6 @@ class kind:
     STRUCTFIELD = iota()
     LIST_LIT = iota()
 
-    PANIC = iota()
-    ADEC = iota()
-    AINC = iota()
-
     GENERIC = iota()
 
     NULL = iota()
@@ -592,8 +592,12 @@ human_kind = [
     "increment",
     
     "decrement",
+    "after decrement",
+    "after increment",
+
     "unary",
     "pointer reference",
+    "panic",
     
     "get pointer",
     "struct",
@@ -619,9 +623,6 @@ human_kind = [
     "struct field",
     "list literal",
 
-    "panic",
-    "after decrement",
-    "after increment",
 
     "generic",
 
@@ -1575,6 +1576,7 @@ def parse_expression(importance): # <- wanted to write priority
     if parse_indentation and not node.block:
         incdec_node = parse_incdec()
         if incdec_node:
+            incdec_node.kind += 2
             incdec_node.block = node;
             node = incdec_node;
 
@@ -1597,6 +1599,8 @@ def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> t
     typecmp = src_tn.isptr() - dest_tn.isptr() # > 0 
     isptr = src_tn.isptr() or dest_tn.isptr()
     bothp = src_tn.isptr() and dest_tn.isptr()
+    if src_tn.unknown():
+        compiler_error(node_stack.pop(), "Cannot cast from unknown or incomplete type")
     if (src_tn.type, src_tn.ptrl) == (dest_tn.type, dest_tn.ptrl):
         return src, dest_tn
     if DEBUGGING:
@@ -1619,7 +1623,7 @@ def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> t
         if dest_tn.type == sw_type.BOOL:
             if src_tn.isstruct():
                 compiler_error(node_stack.pop(), "Cannot cast from struct to boolean");
-            out_writeln(f"%{iota()} = icmp ne {rlt(src_tn)} {src}, 0", level)
+            out_writeln(f"%{iota()} = icmp ne {rlt(src_tn)} {src}, 0 ; 345098", level)
         else:
             if sizeof(dest_tn) > sizeof(src_tn):
                 if dest_tn.isstruct():
@@ -1711,10 +1715,10 @@ def compile_node(node, level, assignable = 0):
                 compiler_error(node, node.string_val)
 
         case kind.EXPRESSION:
+            com = RegInfo("empty expr", node.tn, node.kind)
             for arg in node.children:
                 com = compile_node(arg, level, assignable)
-                arg_names.append(com.val)
-            return RegInfo(f"{arg_names[-1]}", node.tn, node.kind)
+            return com
 
         case kind.RET:
             ret = "void"
@@ -1744,6 +1748,7 @@ def compile_node(node, level, assignable = 0):
             return com
 
         case kind.SIZEOF:
+            # compiler_error(node, "THIS IS ACTIVELY COMPILED", 0)
             com = compile_node(node.block, level)
             USE_LEGACY_SIZEOF = 0
             if USE_LEGACY_SIZEOF:
@@ -1855,7 +1860,8 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"%{iota()} = load {rlt(com.tn-1)}, ptr {com.val}", level)
             out_writeln(f"%{iota()} = add {rlt(com.tn-1)} %{iota(-1)-1}, {1 if node.kind == kind.AINC else -1}", level)
             out_writeln(f"store {rlt(com.tn-1)} %{iota(-1)}, ptr {com.val}", level)
-            com.val = f"%{iota(-2)}"
+            com.val = f"%{iota(-1)-1}"
+            com.tn -= 1
             return com
 
         case kind.INC | kind.DEC:
@@ -1864,7 +1870,7 @@ def compile_node(node, level, assignable = 0):
             out_writeln(f"%{iota()} = add {rlt(com.tn-1)} %{iota(-1)-1}, {1 if node.kind == kind.INC else -1}", level)
             out_writeln(f"store {rlt(com.tn-1)} %{iota(-1)}, ptr {com.val}", level)
             com.val = f"%{iota(-1)}"
-            com.tn-=1
+            com.tn -= 1
             return com
 
         case kind.GENERIC:
@@ -1943,8 +1949,11 @@ def compile_node(node, level, assignable = 0):
                     if not assignable:
                         out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}", level)
                 else:
-                    # out_writeln(f"%{iota()} = load {rlt(struct_node.tn.type, struct_node.tn.ptrl)}, ptr {dest}", level)
-                    out_writeln(f"%{iota()} = extractvalue {rlt(struct_node.tn)} {dest}, {field_id} ; DOING THIS ONE", level)
+                    if dest_com.tn.ptrl:
+                        out_writeln(f"%{iota()} = getelementptr {rlt(struct_node.tn)}, ptr {dest}, i32 0, i32 {field_id}", level)
+                        out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}", level)
+                    else:
+                        out_writeln(f"%{iota()} = extractvalue {rlt(struct_node.tn)} {dest}, {field_id} ; DOING THIS ONE", level)
                 com = RegInfo(f"%{iota(-1)}", field_node.tn, node.kind)
 
                 if do_incdec:
@@ -1960,7 +1969,7 @@ def compile_node(node, level, assignable = 0):
                 dest_com = compile_node(dest_node, level)
                 ret_tn = dest_com.tn.simple()
                 if dest_com.val in ("@va_start", "@va_end", "@va_copy"):
-                    to_call = "@llvm."+dest[1:]
+                    to_call = "@llvm."+dest_com.val[1:]
                 else:
                     to_call = dest_com.val
                 # if dest_node.tkname() in state.declared_funcs:
@@ -1980,6 +1989,7 @@ def compile_node(node, level, assignable = 0):
                     
                 for idx, arg in enumerate(src_node.children):
                     arg_com = compile_node(arg, level)
+                    arg_coms.append(arg_com)
                     arg_names.append(arg_com.val)
 
                     if var_length:
@@ -1992,10 +2002,10 @@ def compile_node(node, level, assignable = 0):
                     out_write(f"call void {to_call}(", level); iota()
                 else:
                     out_write(f"%{iota()} = call {rlt(ftn(funcinfo.type, funcinfo.ptrl))} {to_call}(", level)
-                for idx, arg in enumerate(arg_names):
+                for idx, arg in enumerate(arg_coms):
                     if idx:
                         out_write(", ", 0)
-                    out_write(f"{rlt(src_node.children[idx].tn)} {arg}", 0)
+                    out_write(f"{rlt(arg.tn)} {arg.val}", 0)
                 out_writeln(")", 0)
                 
             else:
@@ -2015,21 +2025,24 @@ def compile_node(node, level, assignable = 0):
                         #else:
                         #    compiler_error(node, "cannot perform logic operations on pointers, please cast to int")
                         if arg_coms[0].kind == kind.NUM_LIT:
-                            node_tn = src_node.tn
+                            node_tn = arg_coms[1].tn
                         elif arg_coms[1].kind == kind.NUM_LIT:
-                            node_tn = dest_node.tn
+                            node_tn = arg_coms[0].tn
                         else:
                             compiler_error(node, "Type mismatch");
                 else:
-                    node_tn = dest_node.tn.copy()
+                    node_tn = arg_coms[1].tn.copy()
                 casted_src = arg_names[1]
+                
+                if node_tn.unknown():
+                    compiler_error(node, "Mistake while trying to infer type")
 
                 match node.tkname():
                     case "+":
                         if both_numlit(dest_node, src_node):
                             node.token = (*node.token[:-1], str(int(dest_node.tkname()) + int(src_node.tkname())))
                             return RegInfo(f"{node.tkname()}", node_tn, kind.NUM_LIT)
-                        out_writeln(f"%{iota()} = add {rlt(node_tn)} {arg_names[0]}, {casted_src}", level)
+                        out_writeln(f"%{iota()} = add {rlt(node_tn)} {arg_names[0]}, {casted_src} ; 79832", level)
                         return RegInfo(f"%{iota(-1)}", node_tn, node.kind)
                     case "-":
                         if both_numlit(dest_node, src_node):

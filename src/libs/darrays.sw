@@ -31,8 +31,6 @@ func ptr void allocate_inited_array(int sizeof_item, int init_capacity) {
     memset(array, 0, size);
     array.capacity = init_capacity;
     array.probe = ARR_SENTINEL;
-    array.len = 67; printf("676767\n");
-    printf("%p\n", &array.len);
     return array_data(array);
 }
 
@@ -48,13 +46,7 @@ macro arr_ensure(arr, new_size) {
 }
 macro arr_push(arr, item) {
     if (!(arr)) { (arr) = allocate_inited_array(sizeof(*arr), ARRAY_INIT_CAPACITY); };
-    printf("string 0\n");
-    printf("arrptr: %p\n", arr);
-    printf("header: %p\n", &(arr_header(arr).len));
-    printf("lenptr: %p\n", &arr_len(arr));
-    arr_len(arr) = 3;
-    (arr)[arr_header(arr).len++] = (item);
-    printf("oo %p\n", arr);
+    (arr)[arr_len(arr)++] = (item);
     if (arr_len(arr) >= arr_capacity(arr)) arr_ensure((arr), arr_capacity(arr)*2);
 }
 macro arr_unordered_remove(arr, index) { (arr)[index] = (arr)[--arr_len(arr)]; }

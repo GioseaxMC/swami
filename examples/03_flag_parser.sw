@@ -17,7 +17,6 @@ func int main(int argc, ptr ptr char argv) {
     parser = make_parser("Flags library test program");
 
     n = add_integer_arg(parser, "-n", "It's a number");
-    printf("outer probe\n");
     *n = 0;
 
     s = add_string_arg(parser, "-s", "It's a string");
@@ -25,7 +24,6 @@ func int main(int argc, ptr ptr char argv) {
     
     d = add_option(parser, "-d", "Do debugging");
     *d = 0;
-
 
     parse_args(&parser, &args);
 

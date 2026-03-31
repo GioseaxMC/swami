@@ -1,27 +1,33 @@
 include {
-    "stdlib.sw"
+    "stdlib.sw",
+    "darrays.sw",
 }
-
-struct Simple {
-    int x
-}
-
-macro get_header(p) {{ (cast op_ptr(p,+,0) as ptr Simple); }; }
-macro get_x(p) {{ get_header(p).x; }; }
 
 func int main() {
-    Simple x;
-    ptr Simple px = &x;
+
+    ptr int array;
+
+    arr_push(array, 67);
+    arr_push(array, 420);
+    arr_push(array, 69);
+    arr_push(array, 34);
+    arr_push(array, 33);
     
-    printf("lets try\n");
+    x = 56;
+
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+    printf("%d\n", x++);
+
+    foreach(array, num, {
+        printf("number: %i\n", *num);
+    });
     
-    px.x = 4;
-
-    min(3,2);
-
-    printf("%p\n", &(px.x));
-
-    min(1,2);
-
-    printf("%p\n", &(get_header(px).x));
+    return 0;
 }

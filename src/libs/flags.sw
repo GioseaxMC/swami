@@ -38,11 +38,9 @@ func Parser make_parser(ptr char desc) {
     return parser;
 }
 
-func ptr void add_arg_impl(ptr Parser _parser, ptr char arg_name, ptr char desc, int atype) {
-    Parser parser = *_parser;
+func ptr void add_arg_impl(ptr Parser parser, ptr char arg_name, ptr char desc, int atype) {
     ptr void pointer = malloc(8);
     
-    printf("%p\n", parser.names);
     arr_push(parser.names, arg_name);
     arr_push(parser.pointers, pointer);
     arr_push(parser.types, atype);
@@ -50,7 +48,6 @@ func ptr void add_arg_impl(ptr Parser _parser, ptr char arg_name, ptr char desc,
     
     if (atype == BoolArg) { *cast pointer as ptr int = 0; };
 
-    *_parser = parser;
     return pointer;
 }
 
@@ -106,11 +103,12 @@ func void parse_args(ptr Parser _parser, ptr ParserArgs argv) {
     
     argv_end = _op_ptr(argv.items,+,sizeof(*argv.items)*argv.length);
     for(arg=argv.items, _op_ptr(arg,!=,argv_end),arg=_op_ptr(arg,+,sizeof(*arg)), {
-        printf("sigma boa inner\n");
         is_flag  = 0;
         flag_pos = 0;
+        
+        same = streq(*arg, "main");
 
-        if (streq(*arg, "-h") || streq(*arg, "--help")) { printf("calling parser show\n"); parser_show_help(_parser, argv); exit(0); };
+        if (streq(*arg, "-h") || streq(*arg, "--help")) { parser_show_help(_parser, argv); exit(0); };
         foreach(_parser.names, name, {
             if (streq(*name, *arg)) {
                 is_flag = 1;
