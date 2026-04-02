@@ -659,7 +659,8 @@ class compiler_state:
         self.declared_macros: dict[str, Node] = {}
         
         self.current_namespace = self.global_vars
-
+        
+        self.constructor_blocks: list[Node] = []
     
 state = compiler_state()
 
@@ -1389,6 +1390,11 @@ def parse_primary():
         node.kind = kind.EXTERN
         parse_extern(node)
     
+    elif token[-1] == "construct":
+        node.block = parse_block()
+        node.kind = kind.NULL
+        state.constructor_blocks.append(node.block)
+
     elif token[-1] == "sizeof":
         node.kind = kind.SIZEOF
         tokens.expect("(")
@@ -1951,11 +1957,11 @@ def compile_node(node, level, assignable = 0):
                     out_writeln(f"%{iota()} = getelementptr {rlt(struct_node.tn)}, ptr {dest}, i32 0, i32 {field_id}", level)
                     inc_dest = f"%{iota(-1)}"
                     if not assignable:
-                        out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}", level)
+                        out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1} ; 67982", level)
                 else:
                     if dest_com.tn.ptrl:
                         out_writeln(f"%{iota()} = getelementptr {rlt(struct_node.tn)}, ptr {dest}, i32 0, i32 {field_id}", level)
-                        out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}", level)
+                        out_writeln(f"%{iota()} = load {rlt(field_node.tn)}, ptr %{iota(-1)-1}; 57439", level)
                     else:
                         out_writeln(f"%{iota()} = extractvalue {rlt(struct_node.tn)} {dest}, {field_id} ; DOING THIS ONE", level)
                 com = RegInfo(f"%{iota(-1)}", field_node.tn, node.kind)
@@ -2023,9 +2029,9 @@ def compile_node(node, level, assignable = 0):
 
                 if src_com.tn.isptr() or dest_com.tn.isptr():
                     if dest_com.tn.isptr():
-                        arg_names[0], dest_com.tn = compile_cast(arg_names[0], dest_com.tn, ftn(sw_type.INT, 0), level)
+                        arg_names[0], dest_com.tn = compile_cast(arg_names[0], dest_com.tn, ftn(sw_type.INT, 0), nlevel)
                     if src_com.tn.isptr():
-                        arg_names[1], src_com.tn = compile_cast(arg_names[1], src_com.tn, ftn(sw_type.INT, 0), level)
+                        arg_names[1], src_com.tn = compile_cast(arg_names[1], src_com.tn, ftn(sw_type.INT, 0), nlevel)
                 if not type_cmp(src_com.tn, dest_com.tn):
                         #if node.tkname() in ("+","-","*","/","%"):
                         #    compiler_error(node, "cannot perform arithmetic operations on pointers, please cast to int, then back to pointers")
@@ -2200,6 +2206,10 @@ def compile_node(node, level, assignable = 0):
                     out_writeln(f"%{arg.tkname()} = alloca {rlt(arg.tn)}", nlevel)
                     out_writeln(f"store {rlt(arg.tn)} %{iota()}, ptr %{arg.tkname()}", nlevel)
             iota()
+            
+            if node.tkname() == "main":
+                for block in state.constructor_blocks:
+                    compile_node(block, nlevel)
 
             com = compile_node(node.block, nlevel)
             if not com.isterminator():

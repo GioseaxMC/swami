@@ -127,17 +127,19 @@ extern int atexit(ptr void)
 
 include { "darrays.sw" }
 
-void void ptr __at_exit_funcs;
+ptr ptr void __at_exit_funcs;
 
-void at_exit(void ptr fn) {
-    arr_push(fn);
+func void at_exit(ptr void fn) {
+    arr_push(__at_exit_funcs, fn);
 }
 
-void __do_at_exit(void) {
+func void __do_at_exit() {
     if !__at_exit_funcs return;
     foreach(__at_exit_funcs, fn, {
-        fn();
-    };
+        cast *fn as void()ptr ();
+    });
 }
 
-
+construct {
+    atexit(__do_at_exit);
+}

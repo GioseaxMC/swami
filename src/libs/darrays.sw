@@ -39,7 +39,7 @@ macro is_array(arr) {{ cast (arr) as bool && arr_header(arr).probe == ARR_SENTIN
 macro arr_len(arr) {{ arr_header(arr).len; };}
 macro arr_capacity(arr) {{ arr_header(arr).capacity; };}
 macro arr_start(arr) {{ arr; };}
-macro arr_end(arr) { (arr)+arr_len(arr)*sizeof(*arr); }
+macro arr_end(arr) { _op_ptr((arr),+,arr_len(arr)*sizeof(*(arr))); }
 macro arr_ensure(arr, new_size) {
     (arr) = array_data(realloc(arr_header(arr), arr_capacity(arr)*2));
     arr_capacity(arr) = new_size;
@@ -56,7 +56,7 @@ macro foreach(da, _iter_n, body) {{
     _iter_n = arr_start(da);
     while _op_ptr(_iter_n,!=,arr_end(da)) {
         body;
-        _iter_n = _op_ptr(_iter_n,+,sizeof(*((da))));
+        _iter_n = _op_ptr(_iter_n,+,sizeof(*(da)));
     };
 };}
 
