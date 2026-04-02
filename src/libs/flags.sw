@@ -38,6 +38,14 @@ func Parser make_parser(ptr char desc) {
     return parser;
 }
 
+func ptr ptr char args_as_da(int argc, ptr ptr char argv) {
+    ptr ptr char array;
+    for(i=0, i<argc, ++i, {
+        arr_push(array, argv[i]);
+    });
+    return array;
+}
+
 func ptr void add_arg_impl(ptr Parser parser, ptr char arg_name, ptr char desc, int atype) {
     ptr void pointer = malloc(8);
     

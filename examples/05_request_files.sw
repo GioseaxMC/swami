@@ -6,8 +6,6 @@ include {
 func int main(int argc, ptr ptr char argv) {
     args = args_as_da(argc, argv);
     
-    sigmafuckingball();
-
     surl_init({
         printf("Couldn't initialize surl\n");
         return 1;
@@ -16,7 +14,7 @@ func int main(int argc, ptr ptr char argv) {
     buffer = "";
 
     foreach(args, arg, {
-        if arg != args.items surl_fetch(*arg, buffer, {
+        if arg != args surl_fetch(*arg, buffer, {
                 printf("Couldn't fetch url");
                 return -1;
         });
@@ -24,7 +22,7 @@ func int main(int argc, ptr ptr char argv) {
     });
 
     surl_close();
-    da_free(args);
+    arr_free(args);
 
     return 0;
 }

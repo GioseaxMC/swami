@@ -11,6 +11,12 @@ struct StringVec {
     int capacity,
 }
 
+macro _str_da_end(__da) { _op_ptr((__da.items),+,sizeof(*(__da).items)*(__da).length); }
+
+macro _str_foreach(__da, __iter_n, __body) {{
+    for(__iter_n = (__da).items, _op_ptr(__iter_n,!=,_str_da_end(__da)), __iter_n=__iter_n+sizeof(*(__da.items)), __body);
+};}
+
 func bool is_letter(char letter) {
     return (letter >= 65 && letter <= 90) || (letter >= 97 || letter <= 122);
 }

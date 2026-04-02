@@ -404,9 +404,13 @@ class typenode:
     
     def isstruct(self):
         return self.type > sw_type.ANY
+    
+    def is_castable(self):
+        return self.isptr() or not self.isstruct() 
 
     def get_zero(self):
-        return "null" if self.isptr() else "0"
+        # return "null" if self.isptr() else "0"
+        return "zeroinitializer"
     
     def copy(self):
         new = typenode()
@@ -1621,17 +1625,17 @@ def compile_cast(src: str, src_tn: typenode, dest_tn: typenode, level: int) -> t
 
     else:
         if dest_tn.type == sw_type.BOOL:
-            if src_tn.isstruct():
-                compiler_error(node_stack.pop(), "Cannot cast from struct to boolean");
+            if not src_tn.is_castable():
+                compiler_error(node_stack.pop(), f"Cannot cast from {hlt(src_tn)} to {hlt(dest_tn)}");
             out_writeln(f"%{iota()} = icmp ne {rlt(src_tn)} {src}, 0 ; 345098", level)
         else:
             if sizeof(dest_tn) > sizeof(src_tn):
-                if dest_tn.isstruct():
-                    compiler_error(node_stack.pop(), "Cannot cast structs")
+                if not dest_tn.is_castable():
+                    compiler_error(node_stack.pop(), f"Cannot cast from {hlt(src_tn)} to {hlt(dest_tn)}");
                 out_writeln(f"%{iota()} = zext {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
             elif sizeof(dest_tn) < sizeof(src_tn):
-                if src_tn.isstruct():
-                    compiler_error(node_stack.pop(), "Cannot cast structs")
+                if not src_tn.is_castable():
+                    compiler_error(node_stack.pop(), f"Cannot cast from {hlt(src_tn)} to {hlt(dest_tn)}");
                 out_writeln(f"%{iota()} = trunc {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)
             else:
                 out_writeln(f"%{iota()} = bitcast {rlt(src_tn)} {src} to {rlt(dest_tn)}", level)

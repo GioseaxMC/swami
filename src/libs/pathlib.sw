@@ -1,5 +1,6 @@
 include {
     "stdlib.sw",
+    "strings.sw",
     "darrays.sw"
 }
 
@@ -25,7 +26,7 @@ func void path_add(ptr Path path, ptr char _pathstr) {
     pathstr = SS(_pathstr);
     str_replace(&pathstr, "\\", "/");
     StringVec elements = str_split(pathstr, *"/");
-    foreach(elements, it, {
+    _str_foreach(elements, it, {
         if streq(it.items, ".") {
             str_free(it);
 
@@ -58,14 +59,14 @@ func Path path_init(ptr char _pathstr) {
 }
 
 func void path_free(ptr Path path) {
-    foreach(path, str, {
+    _str_foreach(path, str, {
         free(*str);
     });
     da_free(path);
 }
 
 func void path_reset(ptr Path path) {
-    foreach(path, str, {
+    _str_foreach(path, str, {
         free(str);
     });
     path.length = 0;
@@ -73,7 +74,7 @@ func void path_reset(ptr Path path) {
 
 func String path_str(Path path) {
     String pathstr = SS("");
-    foreach(path, item, {
+    _str_foreach(path, item, {
         str_add(&pathstr, *item);
         if op_ptr(item, !=, da_end(path)) {
             str_add(&pathstr, "/");
