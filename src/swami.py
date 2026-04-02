@@ -777,8 +777,8 @@ def get_importance(token):
         ("+", "-"),
         ("*", "/"),
         ("%",),
-        ("(",),
 
+        ("(",),
         (".",),
     ]
     for idx, op in enumerate(ops):
@@ -786,7 +786,7 @@ def get_importance(token):
             return idx+1
     return 0
 
-primary_importance = get_importance([0,0,0,"."])-1;
+primary_importance = get_importance([0,0,0,"("])-1;
 
 def iprint(indent, *children, **kwchildren):
     print("| "*indent, *children, *kwchildren)
@@ -1562,7 +1562,7 @@ def parse_expression(importance): # <- wanted to write priority
                     right_node.kind = kind.STRUCTFIELD
 
                     if node.tn.unknown():
-                        compiler_error(node, f"type of &t is incomplete, to fix this declare it without type inference");
+                        compiler_error(node, f"&t is incomplete or undeclared and cannot be examined");
                     if not node.tn.isstruct():
                         compiler_error(node, f"Can only extract field from structs, '{hlt(node.tn)}' is not a struct");
                     struct_node = state.declared_structs[hlt(node.tn.base())]
@@ -2018,12 +2018,15 @@ def compile_node(node, level, assignable = 0):
                     arg_coms.append(tcom)
                     arg_names.append(tcom.val)
                 
-                if src_node.tn.isptr() or dest_node.tn.isptr():
-                    if dest_node.tn.isptr():
-                        arg_names[0], dest_node.tn = compile_cast(arg_names[0], dest_node.tn, ftn(sw_type.INT, 0), level)
-                    if src_node.tn.isptr():
-                        arg_names[1], src_node.tn = compile_cast(arg_names[1], src_node.tn, ftn(sw_type.INT, 0), level)
-                if not type_cmp(src_node.tn, dest_node.tn):
+                src_com = arg_coms[0]
+                dest_com = arg_coms[1]
+
+                if src_com.tn.isptr() or dest_com.tn.isptr():
+                    if dest_com.tn.isptr():
+                        arg_names[0], dest_com.tn = compile_cast(arg_names[0], dest_com.tn, ftn(sw_type.INT, 0), level)
+                    if src_com.tn.isptr():
+                        arg_names[1], src_com.tn = compile_cast(arg_names[1], src_com.tn, ftn(sw_type.INT, 0), level)
+                if not type_cmp(src_com.tn, dest_com.tn):
                         #if node.tkname() in ("+","-","*","/","%"):
                         #    compiler_error(node, "cannot perform arithmetic operations on pointers, please cast to int, then back to pointers")
                         #else:
@@ -2033,7 +2036,7 @@ def compile_node(node, level, assignable = 0):
                         elif arg_coms[1].kind == kind.NUM_LIT:
                             node_tn = arg_coms[0].tn
                         else:
-                            compiler_error(node, "Type mismatch");
+                            compiler_error(node, f"Type mismatch {hlt(arg_coms[0].tn)} != {hlt(arg_coms[1].tn)}");
                 else:
                     node_tn = arg_coms[1].tn.copy()
                 casted_src = arg_names[1]
@@ -2097,8 +2100,8 @@ def compile_node(node, level, assignable = 0):
                         return RegInfo(f"%{iota(-1)}", node_tn, node.kind)
 
                     case "&&":
-                        lhs = compile_cast(arg_names[0], node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
-                        rhs = compile_cast(arg_names[1], node.children[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        lhs = compile_cast(arg_names[0], arg_coms[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        rhs = compile_cast(arg_names[1], arg_coms[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
                     
                         lbl_end = f"and_end_{iota()}"
                         lbl_rhs = f"and_rhs_{iota(-1)}"
@@ -2118,8 +2121,8 @@ def compile_node(node, level, assignable = 0):
 
 
                     case "||":
-                        lhs = compile_cast(arg_names[0], node.children[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
-                        rhs = compile_cast(arg_names[1], node.children[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        lhs = compile_cast(arg_names[0], arg_coms[0].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
+                        rhs = compile_cast(arg_names[1], arg_coms[1].tn, ftn(sw_type.BOOL, 0), nlevel)[0]
 
                         lbl_end = f"or_end_{iota()}"
                         lbl_rhs = f"or_rhs_{iota(-1)}"

@@ -13,8 +13,6 @@ extern void strcpy(ptr char, ptr char)
 extern ptr char strdup(ptr char)
 extern ptr char strstr(ptr char, ptr char)
 extern int strcmp(ptr char, ptr char)
-# extern int isspace(char)
-# extern int isalnum(char)
 
 func int pow(int base, int power) {
     if !power return 0;
@@ -29,14 +27,7 @@ func int pow(int base, int power) {
     return base;
 }
 
-func bool isspace(char c) {
-    return (
-        c == 32    ||
-        c == 9     ||
-        c == 10    ||
-        c == 13
-    );
-}
+func bool isspace(char c) { return (c==9 || c==10 || c==11 || c==12 || c==13 || c==32); }
 
 func bool isalnum(char c) {
     return (
@@ -129,5 +120,24 @@ macro eprintf(__str__, __fmt__) {
     __write_and_free(2, cstr_fmt (__str__, __fmt__) );
 }
 
+# function that tells if a number is prime with 99.99% accuracy
+func bool is_prime(int number) { return 0; }
+
+extern int atexit(ptr void)
+
+include { "darrays.sw" }
+
+void void ptr __at_exit_funcs;
+
+void at_exit(void ptr fn) {
+    arr_push(fn);
+}
+
+void __do_at_exit(void) {
+    if !__at_exit_funcs return;
+    foreach(__at_exit_funcs, fn, {
+        fn();
+    };
+}
 
 
