@@ -975,7 +975,7 @@ def parse_macro_decl():
     state.declared_macros[node.tkname()] = node
     return node
 
-def parse_macro_args():
+def parse_macro_args(end_at_comma=1):
     body_tokens = []
     m_level = 0
     running = 1
@@ -991,12 +991,12 @@ def parse_macro_args():
             else:
                 tokens.pointer -= 1 # no one will see this shit
                 running = 0
-        elif tkname == "," and not m_level: 
+        elif end_at_comma and tkname == "," and not m_level:
             tokens.pointer -= 1 # no one will see this shit
             running = 0
         else:
             body_tokens.append(token)
-    if body_tokens[0][-1] == "[":
+    if len(body_tokens) and body_tokens[0][-1] == "[":
         body_tokens = body_tokens[1:-1]
     return body_tokens
 
@@ -1049,14 +1049,15 @@ def parse_macro_call():
     node.token = tokens.prev()
     macro_call_stack.append(node);
     macro_args = []
+    expected_args = len(state.declared_macros[node.tkname()].children)
     tokens.expect("(")
     while tokens.current()[-1] != ")":
-        macro_args.append(parse_macro_args())
+        macro_args.append(parse_macro_args(expected_args!=1))
         if tokens.current()[-1] != ")":
             tokens.expect(",")
     tokens.expect(")")
 
-    if len(macro_args) != len(state.declared_macros[node.tkname()].children):
+    if len(macro_args) != expected_args:
         compiler_error(node, f"Expected {len(state.declared_macros[node.tkname()].children)} tokens but got {len(macro_args)}")
 
     current_macro_tks = state.macro_tokens[node.tkname()].copy() # memcopy or da_copy()

@@ -3,5 +3,10 @@ include {
 }
 
 func int main() {
-    print((sv("Hello World"), 2, true));
+
+    println("Hello", "World");
+
+    unroll (,) (+) { # what
+        println(67, 420, 1);
+    };
 }

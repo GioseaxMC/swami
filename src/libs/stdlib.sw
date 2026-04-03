@@ -168,8 +168,13 @@ macro __print_once(x) {
 }
 
 macro print(__args) {{
-    unroll (_print_unroller) __args {
+    unroll (_print_unroller) (__args) {
         __print_once(_print_unroller);
         printf(" ");
     };
+};}
+
+macro println(__args) {{
+    print(__args);
+    printf("\n");
 };}
