@@ -143,3 +143,33 @@ func void __do_at_exit() {
 construct {
     atexit(__do_at_exit);
 }
+
+macro __fmt(type) {
+    generic(type,
+        int: "%d",
+        i16: "%hd",
+        i32: "%d",
+        i64: "%lld",
+        char: "%c",
+        bool: "%d",
+        ptr char: "%s",
+        default: "%%?"
+    );
+}
+
+include { "sv.sw" }
+
+macro __print_once(x) {
+    generic(x,
+        bool: if x printf("true") else printf("false"),
+        StringView: sv_print(x),
+        default: printf(__fmt(x), x)
+    );
+}
+
+macro print(__args) {{
+    unroll (_print_unroller) __args {
+        __print_once(_print_unroller);
+        printf(" ");
+    };
+};}

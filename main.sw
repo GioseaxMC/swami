@@ -3,5 +3,5 @@ include {
 }
 
 func int main() {
-    printf("Hello World\n");
+    print((sv("Hello World"), 2, true));
 }

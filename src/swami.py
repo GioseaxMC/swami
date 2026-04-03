@@ -627,7 +627,6 @@ human_kind = [
     "struct field",
     "list literal",
 
-
     "generic",
 
     "null",
@@ -945,7 +944,7 @@ def parse_untyped_args(closer):
     tokens.expect(closer)
     return children
 
-def parse_macro_tokens():
+def parse_block_as_tokens():
     body_tokens = []
     macro_parsing_level = 0
     m_parsing = 1
@@ -965,12 +964,14 @@ def parse_macro_tokens():
             body_tokens.append(token)
     return body_tokens
 
+
 def parse_macro_decl():
     node = Node()
+    node.kind = kind.MACRODECL
     node.token = tokens.consume()
     tokens.expect("(")
     node.children = parse_untyped_args(")")
-    state.macro_tokens[node.tkname()] = parse_macro_tokens()
+    state.macro_tokens[node.tkname()] = parse_block_as_tokens()
     state.declared_macros[node.tkname()] = node
     return node
 
@@ -998,6 +999,49 @@ def parse_macro_args():
     if body_tokens[0][-1] == "[":
         body_tokens = body_tokens[1:-1]
     return body_tokens
+
+def parse_unroll():
+    global tokens
+    node = Node()
+    node.token = tokens.prev();
+    node.custom_data = {}
+    tokens.expect("(")
+    arg_name = tokens.consume()
+    tokens.expect(")")
+    to_roll = []
+    tokens.expect("(")
+    while tokens.current()[-1] != ")":
+        to_roll.append(parse_macro_args())
+        if tokens.current()[-1] != ")":
+            tokens.expect(",")
+    tokens.expect(")")
+
+    bodytks_og = parse_block_as_tokens()
+    
+    og_tokens = tokens
+
+    for roller in to_roll:
+        bodytks = bodytks_og.copy()
+        for idx, arg in enumerate(bodytks):
+            if arg[-1] == arg_name[-1]:
+                bodytks.pop(idx)
+                for tki, stm in enumerate(roller):
+                    bodytks.insert(idx+tki, stm)
+        tokens = Manager(bodytks)
+        inner_node = Node()
+        inner_node.kind = kind.BLOCK
+        inner_node.token = tokens.current()
+        while tokens.more():
+            inner_node.children.append(parse_expression(0))
+            tokens.expect(";")
+        if len(inner_node.children):
+            inner_node.tn = inner_node.children[-1].tn.copy()
+        node.children.append(inner_node)
+    
+    node.kind = kind.BLOCK
+    tokens = og_tokens
+
+    return node
 
 def parse_macro_call():
     global tokens, parse_indentation
@@ -1028,10 +1072,6 @@ def parse_macro_call():
 
     og_tokens = tokens
 
-    if DEBUGGING:
-        for tk in current_macro_tks:
-            ...
-    
     idx = 0
     while idx<len(current_macro_tks):
         if current_macro_tks[idx][-1] == "@":
@@ -1282,6 +1322,19 @@ def parse_generic():
     
     return node
 
+def parse_expressions(ender):
+    node = Node()
+    node.token = tokens.current()
+    while tokens.current()[-1] != ender:
+        n = parse_expression(0)
+        if n.kind != kind.NULL:
+            node.children.append(n)
+        if tokens.current()[-1] != ender:
+            tokens.expect(",");
+    node.tn = node.children[-1].tn.copy()
+    tokens.expect(ender)
+    return node
+
 def parse_primary():
     global state
     
@@ -1310,15 +1363,8 @@ def parse_primary():
         node.block = parse_expression(primary_importance)
         
     elif token[-1] == "(":
+        node = parse_expressions(")")
         node.kind = kind.EXPRESSION
-        while tokens.current()[-1] != ")":
-            n = parse_expression(0)
-            if n.kind != kind.NULL:
-                node.children.append(n)
-            if tokens.current()[-1] != ")":
-                tokens.expect(",");
-        node.tn = node.children[-1].tn.copy()
-        tokens.expect(")")
 
     elif token[-1] == "[":
         node.kind = kind.LIST_LIT
@@ -1396,6 +1442,9 @@ def parse_primary():
         node.kind = kind.NULL
         state.constructor_blocks.append(node.block)
         state.current_namespace = state.global_vars
+    
+    elif token[-1] == "unroll":
+        node = parse_unroll()
 
     elif token[-1] == "sizeof":
         node.kind = kind.SIZEOF
@@ -1483,7 +1532,6 @@ def parse_primary():
         # if parse_indentation:
         #     parser_error(token, "macro statements can only be made at a global level")
         node = parse_macro_decl()
-        node.kind = kind.MACRODECL
         
     elif token[-1] == "include":
         node.kind = kind.BLOCK
@@ -1573,6 +1621,7 @@ def parse_expression(importance): # <- wanted to write priority
                         compiler_error(node, f"&t is incomplete or undeclared and cannot be examined");
                     if not node.tn.isstruct():
                         compiler_error(node, f"Can only extract field from structs, '{hlt(node.tn)}' is not a struct");
+
                     struct_node = state.declared_structs[hlt(node.tn.base())]
                     field_id = struct_node.find_by_name(right_node.tkname(), right_node)
                     field_node = struct_node.children[field_id]
