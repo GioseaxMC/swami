@@ -854,7 +854,6 @@ def type_cmp(type1, type2):
                 return 0
         return (type1.type, type1.ptrl, type1.count) == (type2.type, type2.ptrl, type2.count)
 
-
 def parse():
     global parse_indentation
     parse_indentation = 0
@@ -1062,6 +1061,7 @@ def parse_macro_call():
     return node;
 
 def parse_block():
+    global parse_indentation; parse_indentation+=1
     tokens.expect("{")
     block = Node()
     block.token = tokens.current()
@@ -1077,6 +1077,7 @@ def parse_block():
     tokens.expect("}")
     if len(block.children):
         block.tn = block.children[-1].tn.copy()
+    parse_indentation -= 1
     return block
     
 def parse_funcdecl(node):
@@ -1091,7 +1092,7 @@ def parse_funcdecl(node):
     #    parser_error(state.declared_funcs[node.tkname()].token, "Previously declared here", 0);
     #    parser_error(node.token, "Cannot redeclare function")
     state.declared_funcs[node.tkname()] = node
-    state.func_namespaces[node.tkname()] = {}
+    state.func_namespaces[node.tkname()] = state.func_namespaces.get(node.tkname(), {})
     state.current_namespace = state.func_namespaces[node.tkname()]
     tokens.expect("(")
     parse_indentation += 1
@@ -1177,7 +1178,6 @@ def parse_vardecl(node):
             op_node.children.append(parse_expression(0))
             node = op_node
     return node
-    # tokens.expect(";")
 
 def parse_varref(node):
     if node.tkname() in state.current_namespace:
@@ -1189,7 +1189,6 @@ def parse_varref(node):
     
     var_info = namespace[node.tkname()]
     node.tn = var_info.tn.copy()
-    # node.block = parse_incdec()
 
 included_files: list[str] = []
 def parse_inclusion(node) -> Node:
@@ -1391,9 +1390,12 @@ def parse_primary():
         parse_extern(node)
     
     elif token[-1] == "construct":
+        state.func_namespaces["main"] = state.func_namespaces.get("main", {})
+        state.current_namespace = state.func_namespaces["main"]
         node.block = parse_block()
         node.kind = kind.NULL
         state.constructor_blocks.append(node.block)
+        state.current_namespace = state.global_vars
 
     elif token[-1] == "sizeof":
         node.kind = kind.SIZEOF
@@ -1849,11 +1851,11 @@ def compile_node(node, level, assignable = 0):
                 com.tn+=1
             else:
                 if node.tkname() in state.global_vars:
-                    out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)}  @{node.tkname()}", level)
+                    out_writeln(f"%{iota()} = load {rlt(node.tn)}, {rlt(node.tn+1)}  @{node.tkname()} ; 35439", level)
                 else:
                     if node.tn.unknown():
                         com.tn = state.current_namespace[node.tkname()].tn.copy()
-                    out_writeln(f"%{iota()} = load {rlt(node.tn)} , {rlt(node.tn+1)} %{node.tkname()}", level)
+                    out_writeln(f"%{iota()} = load {rlt(node.tn)}, {rlt(node.tn+1)} %{node.tkname()} ; 07523", level)
 
                 com.val = f"%{iota(-1)}"
                 

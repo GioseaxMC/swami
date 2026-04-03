@@ -125,7 +125,7 @@ func bool is_prime(int number) { return 0; }
 
 extern int atexit(ptr void)
 
-include { "darrays.sw" }
+include { "darrays.sw" } # dont like this but at the same time the library is just macros
 
 ptr ptr void __at_exit_funcs;
 
