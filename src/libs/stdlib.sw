@@ -181,3 +181,19 @@ macro println(__args) {{
     print(__args);
     printf("\n");
 };}
+
+int __iota_counter = 0;
+func int __iota__() { return __iota_counter++; }
+func int __iota_reset__() { __iota_counter=0; return 0; }
+macro enum(args) {
+    unroll (arg) (args) {
+        int arg;
+    };
+    construct {
+        __iota_reset__();
+        unroll(arg) (args) {
+            arg = __iota__();
+        };
+    };
+}
+

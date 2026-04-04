@@ -118,7 +118,7 @@ func void ht_free(ptr ptr HT_element ht) {
                 free(e.item);
                 free(e.key);
             });
-            arr_free(*array);
+            arr_free(*array); 
         };
     });
     arr_free(ht);

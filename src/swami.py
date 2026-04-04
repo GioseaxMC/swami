@@ -483,7 +483,7 @@ class Node:
         self.token: tuple = None
         self.string_val: str = ""
         self.int_val: int = 0
-        self.kind: int = -1
+        self.kind: int = kind.NULL
         self.children: list[Node] = []
         self.tn: typenode = typenode()
         self.block = None
@@ -623,7 +623,7 @@ human_kind = [
     "reserve",
     "break",
 
-    "continue"
+    "continue",
     "struct field",
     "list literal",
 
@@ -631,6 +631,10 @@ human_kind = [
 
     "null",
 ]
+
+if human_kind.index("generic") != kind.GENERIC:
+    print("INTERNAL ERROR: human kind is not properly setup");
+    exit(-1)
 
 class RegInfo:
     def __init__(self, val, tn, kind = kind.NULL):
@@ -793,6 +797,7 @@ def iprint(indent, *children, **kwchildren):
 
 def print_node(node, indent = 0):
     nindent = indent+1
+    iprint(indent, kind.NULL, node.kind, human_kind.index("null"))
     if not DEBUGGING:
         return
     iprint(indent, "name::", node.tkname())
@@ -1044,7 +1049,8 @@ def parse_unroll():
         inner_node.kind = kind.BLOCK
         inner_node.token = tokens.current()
         while tokens.more():
-            inner_node.children.append(parse_expression(0))
+            if (expr:=parse_expression(0)).kind != kind.NULL:
+                inner_node.children.append(expr)
             tokens.expect(";")
         if len(inner_node.children):
             inner_node.tn = inner_node.children[-1].tn.copy()
@@ -1104,8 +1110,8 @@ def parse_macro_call():
     old_pi = parse_indentation
     parse_indentation = -1
     while tokens.more():
-
-        node.children.append(parse_expression(0))
+        if (expr:=parse_expression(0)).kind != kind.NULL:
+            node.children.append(expr)
         tokens.expect(";")
     
     if len(node.children):
