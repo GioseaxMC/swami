@@ -17,6 +17,9 @@ func void main() {
     while (more(tokens)) {
         printf("|%s|\n", consume(tokens).token);
     };
+
+    free_file(f);
+    free_token_list(tokens);
 }
 
 

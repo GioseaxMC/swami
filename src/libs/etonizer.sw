@@ -22,8 +22,58 @@ struct TokenList {
     int index,
 }
 
+ptr ptr char OPERATORS;
+construct {
+    OPERATORS = [
+        "=",
+        "+",
+        "-",
+        "*",
+        "/",
+        "++",
+        "--",
+        "!",
+        "==",
+        "!=",
+        ">",
+        "<",
+        ">=",
+        "<=",
+        "|",
+        "||",
+        "&",
+        "&&",
+        "...",
+        "<>",
+        "[",
+        "(",
+        "@",
+        "%",
+        "->",
+    ];
+}
 
+func bool can_be_operator(ptr char tk, int size) {
+    ops = OPERATORS;
+    while *ops {
+        smaller = size <= strlen(*ops);
+        can_be = strncmp(tk, *ops, size) == 0;
 
+        if smaller && can_be return 1;
+        ops = op_ptr(ops,+,sizeof(*ops));
+    };
+    return 0;
+}
+
+func bool represents_operator(ptr char tk) {
+    ops = OPERATORS;
+    while *ops {
+        println("checking ", tk, " and ", *ops);
+        if strcmp(tk, *ops) == 0 return 1;
+        ops = op_ptr(ops,+,sizeof(*ops));
+    };
+    return 0;
+}
 
 func TokenList init_token_list() {
     TokenList list;
@@ -111,6 +161,7 @@ func ptr TokenList tokenize(ptr char file, ptr char filename) {
     start_pos = 0;
     reserve 256 as token;
 
+    i=0;
     while pos < len {
         # printf("isalnum = %i\n", isspace(file[pos]));
 
@@ -136,7 +187,7 @@ func ptr TokenList tokenize(ptr char file, ptr char filename) {
 
         } else if isalnum(file[pos]) || file[pos] == *"_" {
             start_pos = pos;
-            i = 0;
+            i=0;
             start_row = row;
             while (isalnum(file[pos]) || file[pos] == *"_") {
                 token[i++] = file[pos];
@@ -148,12 +199,31 @@ func ptr TokenList tokenize(ptr char file, ptr char filename) {
             continue;
 
         } else {
+            # implement so given a list of operators ["++", "--", "<>", "..."] and so on, it will be added if the token is not in the list
+            start_row = row;
             start_pos = pos;
-            token[0] = file[pos];
-            token[1] = 0;
-            add_token(list, filename, line, row, token);
-            pos++;
-            row++;
+            i=0;
+            token[i++] = file[pos++];
+            token[i] = 0;
+            while can_be_operator(token, i) {
+                token[i++] = file[pos];
+                pos++;
+                row++;
+            };
+            if i > 1 {
+                token[--i]=0;
+                row--;
+                pos--;
+            } else
+                token[i]=0;
+            if !represents_operator(token) {
+                row = ++start_row;
+                pos = ++start_pos;
+                i=1;
+                token[i]=0;
+            };
+
+            add_token(list, filename, line, start_row, token);
             continue;
         };
 
@@ -167,20 +237,22 @@ func ptr TokenList tokenize(ptr char file, ptr char filename) {
     return list;
 }
 
+func bool more(ptr TokenList ls) {
+    return ls.index < ls.size;
+}
+
 func Token current(ptr TokenList ls) {
     return ls.tokens[ls.index];
 }
 
 func Token consume(ptr TokenList ls) {
-    return ls.tokens[ls.index++];
+    if more(ls)
+        return ls.tokens[ls.index++];
+    return ls.tokens[ls.index];
 }
 
 func Token peek(ptr TokenList ls) {
     return ls.tokens[ls.index+1];
-}
-
-func int more(ptr TokenList ls) {
-    return ls.size - ls.index;
 }
 
 func bool expect(ptr TokenList ls, ptr char goal) {

@@ -1956,11 +1956,11 @@ def compile_node(node, level, assignable = 0):
                 if src_com.tn.isptr() and dest_com.tn.isptr() and dest_com.tn.type == sw_type.CHAR:
                     out_writeln(f"store ptr {src_com.val}, ptr {dest_com.val}", level)
                 elif src_com.kind == kind.NUM_LIT: # TODO: this was commented out, figure out why
-                    out_writeln(f"store {rlt(src_com.tn)} {src_com.val}, ptr {dest_com.val} ; 09384", level)
+                    out_writeln(f"store {rlt(dest_com.tn-1)} {src_com.val}, ptr {dest_com.val} ; 09384", level)
                 elif not type_cmp(src_com.tn, dest_com.tn-1):
                     compiler_error(node, f"Types don't match in assignment '{hlt(dest_com.tn-1)}' != '{hlt(src_com.tn)}'")
                 else:
-                    out_writeln(f"store {rlt(src_com.tn)} {src_com.val}, ptr {dest_com.val} ; 43098", level) ## edited
+                    out_writeln(f"store {rlt(dest_com.tn-1)} {src_com.val}, ptr {dest_com.val} ; 43098", level) ## edited
                 return src_com
             
             elif node.tkname() == "[":

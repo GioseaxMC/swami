@@ -13,6 +13,7 @@ extern void strcpy(ptr char, ptr char)
 extern ptr char strdup(ptr char)
 extern ptr char strstr(ptr char, ptr char)
 extern int strcmp(ptr char, ptr char)
+extern int strncmp(ptr char, ptr char, int)
 
 func int pow(int base, int power) {
     if !power return 0;
@@ -170,7 +171,6 @@ macro __print_once(x) {
 macro print(__args) {{
     unroll (_print_unroller) (__args) {
         __print_once(_print_unroller);
-        printf(" ");
     };
 };}
 

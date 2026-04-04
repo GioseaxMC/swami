@@ -2,7 +2,8 @@ extern ptr void fopen(ptr void, ptr char)
 extern ptr void fdopen(int, ptr char)
 extern int rewind(ptr void)
 extern int fseek(ptr void, int, int)
-extern int ftell(ptr void)
+@linux extern int ftell(ptr void)
+@windows extern int ftell(ptr void)
 extern int fclose(ptr void)
 extern int fwrite(ptr char, int, int, ptr void)
 extern int fread(ptr void, int, int, ptr void)
@@ -11,9 +12,8 @@ extern void write(int, ptr char, int)
 
 extern int strlen(ptr char)
 
+extern void free(ptr void)
 extern ptr void malloc(int)
-
-include { "fsapper.sw" }
 
 int STDIN_FILENO = 0
 int STDOUT_FILENO = 1
@@ -34,7 +34,7 @@ int FAILED_TO_WRITE = -3
 
 func int write_file(ptr char filename, ptr char contents) {
     ptr void file = fopen(filename, "wb");
-    if (!(file == cast 0 as ptr void)) {
+    if (file != cast 0 as ptr void) {
         fclose(file); 
         return FAILED_TO_OPEN;
     };
@@ -42,7 +42,7 @@ func int write_file(ptr char filename, ptr char contents) {
     int len = strlen(contents);
     int written = fwrite(contents, 1, len, file);
     
-    if (!(written == len)) {
+    if (written =! len) {
         fclose(file);
         return FAILED_TO_WRITE;
     };
@@ -59,9 +59,6 @@ struct File {
 
 func File read_file(ptr char filename) {
     File ftemp;
-    ftemp.size = 0;
-    ftemp.contents = cast 0 as ptr void;
-    ftemp.error = 0;
     ftemp.filename = filename;
 
     int size = 0;
@@ -74,11 +71,13 @@ func File read_file(ptr char filename) {
     fseek(file, 0, 2);
     size = ftell(file);
     rewind(file);
+    
 
-    buffer = malloc(size+1);
+    buffer = malloc(cast size+1 as int);
     if !buffer {
         fclose(file);
         ftemp.error = FAILED_TO_READ;
+        return ftemp;
     };
 
     fread(buffer, 1, size, file);
@@ -88,4 +87,8 @@ func File read_file(ptr char filename) {
 
     fclose(file);
     return ftemp;
+}
+
+func int free_file(File f) {
+    free(f.contents);
 }
