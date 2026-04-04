@@ -141,13 +141,16 @@ func void __do_at_exit() {
     });
 }
 
+
+ptr char _int_fmt;
 construct {
+    if sizeof(int)==8 _int_fmt="%lld" else _int_fmt="%d";
     atexit(__do_at_exit);
 }
 
 macro __fmt(type) {
     generic(type,
-        int: "%d",
+        int: _int_fmt,
         i16: "%hd",
         i32: "%d",
         i64: "%lld",

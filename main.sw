@@ -1,22 +1,28 @@
+
 include {
     "stdlib.sw",
-    "etonizer.sw",
-    "files.sw"
+    "dicts.sw",
 }
 
 func int main()
 {
-    f = read_file("dummy.json");
-    if f.error return 1;
-    tokens = tokenize(f.contents, f.filename);
+    ht = new_ht(ptr ptr int);
     
-    while more(tokens) {
-        t = consume(tokens); 
-        println(t.token);
+    *ht_get(ht, "ages") = new_ht(int);
+    *ht_get(ht, "heights") = new_ht(int);
+    
+
+    *ht_get(*ht_get(ht, "ages"), "giose") = 18;
+    *ht_get(*ht_get(ht, "heights"), "giose") = 182;
+    *ht_get(*ht_get(ht, "ages"), "giose") = 17;
+
+    ht_foreach(ht, k, i, {
+        ht_foreach(*i, key, item, {
+            println(k, " > ", key, " > ", *item);
+        });
+        ht_free(*i);
     });
 
-    free_file(f);
-    free_token_list(tokens);
+    ht_free(ht);
 
-    println("Hello world");
 }

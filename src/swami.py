@@ -874,9 +874,13 @@ def parse_incdec():
 
 def parse_type_base(ptrl):
     typename = tokens.consume()
-    if typename[-1] not in human_type:
+    if typename[-1] == "typeof":
+        tn = parse_primary().tn
+        rtype, ptrl = tn.rtype, tn.ptrl;
+    elif typename[-1] in human_type:
+        rtype = human_type.index(typename[-1])
+    else:
         parser_error(typename, "Expected typename but got '&t'")
-    rtype = human_type.index(typename[-1])
     if rtype == sw_type.VOID:
         if ptrl:
             rtype = sw_type.CHAR
@@ -886,15 +890,18 @@ def parse_type_base(ptrl):
     else:
         return rtype, ptrl
 
-def parse_type(tn):
+def parse_type():
+    tn = typenode()
     tn.token = tokens.current()
+    if tn.token[-1] == "typeof":
+        tokens.consume()
+        return parse_primary().tn.copy()
     tn.type, tn.ptrl = parse_type_base(0)
     tn.outptrl = 0
     if tokens.current()[-1] == "(":
         tokens.consume()
         while tokens.current()[-1] != ")":
-            ntn = typenode()
-            parse_type(ntn)
+            ntn = parse_type()
             tn.children.append(ntn)
             if tokens.current()[-1] != ")":
                 tokens.expect(",")
@@ -907,10 +914,11 @@ def parse_type(tn):
     while tokens.current()[-1] == human_type[sw_type.PTR]:
         tokens.consume()
         tn.outptrl += 1
+    return tn
 
 def parse_named_arg(closer):
     node = Node()
-    parse_type(node.tn)
+    node.tn = parse_type()
     if node.tn.type != sw_type.ANY:
         node.token = tokens.consume()
         if not tokenizable(node.tkname()):
@@ -1022,11 +1030,15 @@ def parse_unroll():
 
     for roller in to_roll:
         bodytks = bodytks_og.copy()
-        for idx, arg in enumerate(bodytks):
+        idx=0;
+        while idx<len(bodytks):
+            arg=bodytks[idx]
             if arg[-1] == arg_name[-1]:
                 bodytks.pop(idx)
                 for tki, stm in enumerate(roller):
-                    bodytks.insert(idx+tki, stm)
+                    bodytks.insert(idx, stm)
+                    idx+=1
+            idx+=1
         tokens = Manager(bodytks)
         inner_node = Node()
         inner_node.kind = kind.BLOCK
@@ -1063,13 +1075,16 @@ def parse_macro_call():
     current_macro_tks = state.macro_tokens[node.tkname()].copy() # memcopy or da_copy()
     arg_names = [x.tkname() for x in state.declared_macros[node.tkname()].children]
     
-
-    for idx, arg in enumerate(current_macro_tks):
+    idx = 0
+    while idx<len(current_macro_tks):
+        arg = current_macro_tks[idx]
         if arg[-1] in arg_names:
             arg_idx = arg_names.index(arg[-1])
             current_macro_tks.pop(idx)
             for tki, tk in enumerate(macro_args[arg_idx]):
-                current_macro_tks.insert(idx+tki, tk)
+                current_macro_tks.insert(idx, tk)
+                idx+=1
+        idx+=1
 
     og_tokens = tokens
 
@@ -1123,7 +1138,7 @@ def parse_block():
     
 def parse_funcdecl(node):
     global current_namespace, parse_indentation
-    parse_type(node.tn)
+    node.tn = parse_type()
     if node.tn.is_callable():
         parser_error(node.tn.token, "functions cannot return function type or function pointers, just use 'ptr void'")
     node.token = tokens.consume()
@@ -1159,7 +1174,7 @@ def parse_funcref(node):
 
 def parse_unnamed_arg(closer):
     node = Node()
-    parse_type(node.tn)
+    node.tn = parse_type()
     node.token = tokens.prev()
     if tokens.current()[-1] != closer:
         tokens.expect(",")
@@ -1172,7 +1187,7 @@ def parse_unnamed_args(closer):
     return children
 
 def parse_extern(node):
-    parse_type(node.tn)
+    node.tn = parse_type()
     node.token = tokens.consume()
     if node.tkname() in state.declared_funcs:
         node.kind = kind.NULL
@@ -1299,8 +1314,7 @@ def parse_generic():
     default_node = None
     while tokens.current()[-1] != ")":
         if tokens.current()[-1] != "default":
-            tn = typenode()
-            parse_type(tn)
+            tn = parse_type()
             node.custom_data.append(tn)
             tokens.expect(":")
             expr = parse_expression(0)
@@ -1544,14 +1558,14 @@ def parse_primary():
         tokens.expect("as")
         type_node = Node()
         type_node.token = tokens.current()
-        parse_type(type_node.tn)
+        type_node.tn = parse_type()
         node.tn = type_node.tn # non copy
         node.children.append(type_node)
 
-    elif token[-1] in human_type:
+    elif token[-1] in human_type or token[-1] == "typeof":
         node.kind = kind.VARDECL
         tokens.goback() # no one will see this... what was i thinking bruh
-        parse_type(node.tn)
+        node.tn = parse_type()
         node.tn.check_valid()
         if uisalnum(tokens.current()[-1]):
             node = parse_vardecl(node)

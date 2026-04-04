@@ -34,8 +34,9 @@ func ptr void allocate_inited_array(int sizeof_item, int init_capacity) {
     return array_data(array);
 }
 
-macro new_array(type) { cast allocate_inited_array(sizeof(type), ARRAY_INIT_CAPACITY) as ptr type; }
-macro is_array(arr) {{ cast (arr) as bool && arr_header(arr).probe == ARR_SENTINEL; };}
+macro new_array_with_size(type, size) { cast allocate_inited_array(sizeof(type), size) as ptr type; }
+macro new_array(type) { new_array_with_size(type, ARRAY_INIT_CAPACITY); }
+func bool is_array(ptr void arr) { if !arr return 0; return arr_header(arr).probe == ARR_SENTINEL; }
 macro arr_len(arr) {{ arr_header(arr).len; };}
 macro arr_capacity(arr) {{ arr_header(arr).capacity; };}
 macro arr_start(arr) {{ arr; };}
@@ -50,7 +51,7 @@ macro arr_push(arr, item) {
     if (arr_len(arr) >= arr_capacity(arr)) arr_ensure((arr), arr_capacity(arr)*2);
 }
 macro arr_unordered_remove(arr, index) { (arr)[index] = (arr)[--arr_len(arr)]; }
-macro arr_free(arr) { free(arr_header(arr)); }
+macro arr_free(arr) { free(arr_header((arr))); }
 
 macro foreach(da, _iter_n, body) {{
     _iter_n = arr_start(da);
