@@ -776,7 +776,6 @@ def get_importance(token):
         ("!=",),
         
 
-        ("[",),
 
         ("+", "-"),
         ("*", "/"),
@@ -784,6 +783,7 @@ def get_importance(token):
 
         ("(",),
         (".",),
+        ("[",),
     ]
     for idx, op in enumerate(ops):
         if tkname in op:
@@ -797,7 +797,6 @@ def iprint(indent, *children, **kwchildren):
 
 def print_node(node, indent = 0):
     nindent = indent+1
-    iprint(indent, kind.NULL, node.kind, human_kind.index("null"))
     if not DEBUGGING:
         return
     iprint(indent, "name::", node.tkname())
@@ -1630,6 +1629,8 @@ def parse_expression(importance): # <- wanted to write priority
                 op_node.tn = right_node.tn
                 node.tn = right_node.tn
                 if node.kind == kind.WORD:
+                    if right_node.tn.unknown():
+                        compiler_error(node, "right hand side is incomplete\nthe type cannot be derived, to fix this declare the type manually")
                     node.kind = kind.VARDECL
                     add_usr_var(node, parse_indentation)
             case ".":
@@ -2067,7 +2068,8 @@ def compile_node(node, level, assignable = 0):
                         var_length = 1
                     
                 if not var_length and len(funcinfo.children) != len(src_node.children):
-                    compiler_error(dest_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}")
+                    compiler_error(funcinfo, "refer to implementation:", 0)
+                    compiler_error(dest_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}:\n");
                     
                 for idx, arg in enumerate(src_node.children):
                     arg_com = compile_node(arg, level)
@@ -2089,6 +2091,8 @@ def compile_node(node, level, assignable = 0):
                         out_write(", ", 0)
                     out_write(f"{rlt(arg.tn)} {arg.val}", 0)
                 out_writeln(")", 0)
+                
+                return RegInfo(f"%{iota(-1)}", ret_tn, kind.FUNCCALL)
                 
             else:
                 for idx, arg in enumerate(node.children):

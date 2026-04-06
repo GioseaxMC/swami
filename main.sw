@@ -1,15 +1,16 @@
 include {
-    "stdlib.sw"
+    "stdlib.sw",
+    "files.sw",
+    "json.sw",
 }
 
-enum(
-    ZERO,
-    ONE,
-    TWO,
-    TREE
-)
+func int main()
+{   
+    f = read_file("dummy.json");
+    json = js_parse_string(f.contents, f.filename);
+        
+    num = json_get(json, "nest ok [2]").str;    
+    println(num);
 
-func int main() {
-    println(ZERO);
-    println(TREE);
+    return 0;
 }

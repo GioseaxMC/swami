@@ -68,7 +68,6 @@ func bool can_be_operator(ptr char tk, int size) {
 func bool represents_operator(ptr char tk) {
     ops = OPERATORS;
     while *ops {
-        println("checking ", tk, " and ", *ops);
         if strcmp(tk, *ops) == 0 return 1;
         ops = op_ptr(ops,+,sizeof(*ops));
     };
@@ -241,18 +240,20 @@ func bool more(ptr TokenList ls) {
     return ls.index < ls.size;
 }
 
-func Token current(ptr TokenList ls) {
-    return ls.tokens[ls.index];
+func ptr Token current(ptr TokenList ls) {
+    return &ls.tokens[ls.index];
 }
 
-func Token consume(ptr TokenList ls) {
+func ptr Token consume(ptr TokenList ls) {
     if more(ls)
-        return ls.tokens[ls.index++];
-    return ls.tokens[ls.index];
+        return &ls.tokens[ls.index++];
+    return NULL;
 }
 
-func Token peek(ptr TokenList ls) {
-    return ls.tokens[ls.index+1];
+func ptr Token peek(ptr TokenList ls) {
+    if ls.index+1 < ls.size
+        return &ls.tokens[ls.index+1];
+    return NULL;
 }
 
 func bool expect(ptr TokenList ls, ptr char goal) {
@@ -271,7 +272,15 @@ func bool expect(ptr TokenList ls, ptr char goal) {
     return 1;
 }
 
-macro prepend_minus(str) {{
+func ptr char get_string(Token tk) {
+    reserve 1024 as temp;
+    memcpy(temp, op_ptr(tk.token,+,1), tk.token_len-1);
+    temp[tk.token_len-2] = 0;
+    # escape temp;
+    strdup(temp);
+}
+
+macro __cstr_prepend_minus(str) {{
     _len = strlen(str);
     (str) = realloc((str), _len+2);
     memmove((str)+1, (str), _len+1);
