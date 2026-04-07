@@ -88,6 +88,14 @@ func ptr void _ht_get(ptr ptr HT_element ht, ptr char key, int sizeof_item) {
     return e.item;
 }
 
+func ptr void _ht_find(ptr ptr HT_element ht, ptr char key) {
+    h = hash_cstr(key) % HT_SIZE;
+    if is_array(ht[h]) {
+        foreach(ht[h], element, {if streq(element.key, key) return element.item;});
+    };
+    return NULL;
+}
+
 func ptr void _ht_pop(ptr ptr HT_element ht, ptr char key) {
     h = hash_cstr(key) % HT_SIZE;
     if is_array(ht[h]) {
@@ -109,6 +117,10 @@ macro ht_get(ht, key) {
 
 macro ht_pop(ht, key) {
     cast _ht_pop(ht, key) as typeof(*ht);
+}
+
+macro ht_find(ht, key) {
+    cast _ht_find(ht, key) as typeof(*ht);
 }
 
 func void ht_free(ptr ptr HT_element ht) {

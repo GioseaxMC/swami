@@ -272,12 +272,11 @@ func bool expect(ptr TokenList ls, ptr char goal) {
     return 1;
 }
 
-func ptr char get_string(Token tk) {
-    reserve 1024 as temp;
+func ptr char get_string(ptr char temp, Token tk) {
     memcpy(temp, op_ptr(tk.token,+,1), tk.token_len-1);
     temp[tk.token_len-2] = 0;
     # escape temp;
-    strdup(temp);
+    return temp;
 }
 
 macro __cstr_prepend_minus(str) {{

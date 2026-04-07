@@ -52,7 +52,7 @@ macro arr_push(arr, item) {
 }
 macro arr_unordered_remove(arr, index) { (arr)[index] = (arr)[--arr_len(arr)]; }
 macro arr_free(arr) { free(arr_header((arr))); }
-
+macro arr_exists(arr, idx) { idx<arr_len(arr); }
 macro foreach(da, _iter_n, body) {{
     _iter_n = arr_start(da);
     while _op_ptr(_iter_n,!=,arr_end(da)) {
