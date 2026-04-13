@@ -1356,7 +1356,7 @@ def parse_expressions(ender):
     return node
 
 def parse_primary():
-    global state
+    global state, parse_indentation
     
     token = tokens.consume()
     debug(F"[PRIMARY]: '{token[-1]}'")
