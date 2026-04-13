@@ -1441,7 +1441,9 @@ def parse_primary():
     elif token[-1] == "@":
         systk = tokens.consume()
         old_state = deepcopy(state)
+        parse_indentation-=1
         node = parse_expression(0)
+        parse_indentation+=1
         if systk[-1] != os_name:
             state = old_state
             node.kind = kind.NULL
@@ -1761,7 +1763,8 @@ def compile_return(block, ret, level):
             else:
                 out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
         else:
-            compiler_error(block, f"return types don't match: function is of type '{hlt(funcinfo)}' but '{hlt(block.tn)}' was returned")
+            out_writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
+            compiler_error(block.children[-1], f"defaulting to implicit return 0", 0)
     else:
         if funcinfo.unknown():
             out_writeln("ret void", level)

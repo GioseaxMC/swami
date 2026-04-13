@@ -46,8 +46,8 @@ extern int snprintf(ptr void, ptr char, ptr char, <>)
 extern int printf(ptr char, <>)
 extern int fprintf(ptr void, ptr char, <>)
 
-extern void write(int, ptr char, int)
-extern int read(int, ptr char, int)
+extern void write(i32, ptr char, i32)
+extern i32 read(i32, ptr char, i32)
 
 @windows extern int Sleep(int)
 @windows macro sleep(time) { Sleep(time); }
