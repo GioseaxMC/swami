@@ -18,6 +18,10 @@ func StringView sv(ptr char str) {
     sv_from_parts(str, strlen(str));
 }
 
+func void StringView_assign_ptr_char(ptr StringView _sv, ptr char cstr) {
+    *_sv = sv(cstr);
+}
+
 func StringView sv_lchop(StringView sv, int n) {
     if n > sv.len n = sv.len;
     sv.cstr = op_ptr(sv.cstr,+,n);
@@ -93,6 +97,10 @@ func void sv_print(StringView sv) {
 func void sv_println(StringView sv) {
     sv_print(sv);
     printf("\n");
+}
+
+func void Printer_when_StringView(ptr void _, StringView sv) {
+    sv_print(sv);
 }
 
 func ptr char sv_to_cstr(StringView sv) {

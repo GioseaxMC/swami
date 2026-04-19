@@ -288,7 +288,7 @@ named_operands = [
     "call",
     "join",
     "mod",
-    "arrow", #
+    "when", #
 ]
 
 def get_operand_name(operand: str):
@@ -824,7 +824,7 @@ def get_importance(token):
         ("%",),
 
         ("(",),
-        (".",),
+        (".","->"),
         ("[",),
     ]
     for idx, op in enumerate(ops):
@@ -1709,7 +1709,8 @@ def parse_expression(importance): # <- wanted to write priority
                     field_node = struct_node.children[field_id]
                     op_node.tn = field_node.tn
                 else:
-                    parser_error(right_node.token, "Expected a struct field");
+                    ...
+                    # parser_error(right_node.token, "Expected a struct field");
 
             case _:
                 right_node = parse_expression(get_importance(op_token))
@@ -2099,6 +2100,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             overload_n = get_overload_name(node)
+            print(overload_n)
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0

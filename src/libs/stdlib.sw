@@ -161,13 +161,20 @@ macro __fmt(type) {
     );
 }
 
-include { "sv.sw" }
+struct Printer {};
+Printer printer;
 
 macro __print_once(x) {
     generic(x,
         bool: if x printf("true") else printf("false"),
-        StringView: sv_print(x),
-        default: printf(__fmt(x), x)
+        int: printf(__fmt(x), x),
+        i16: printf(__fmt(x), x),
+        i32: printf(__fmt(x), x),
+        i64: printf(__fmt(x), x),
+        char: printf(__fmt(x), x),
+        bool: printf(__fmt(x), x),
+        ptr char: printf(__fmt(x), x),
+        default: printer->(x)
     );
 }
 
@@ -196,4 +203,5 @@ macro enum(args) {
         };
     };
 }
+
 
