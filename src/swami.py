@@ -263,6 +263,46 @@ human_operands = [
     "->",
 ]
 
+named_operands = [
+    "assign",
+    "sum",
+    "sub",
+    "mul",
+    "div",
+    "increment",
+    "decrement",
+    "negate",
+    "equal",
+    "not_equal",
+    "greater",
+    "smaller",
+    "greater_eq",
+    "smaller_eq",
+    "bit_or",
+    "or",
+    "bit_and",
+    "and",
+    "examine",
+    "var_args", #
+    "index",
+    "call",
+    "join",
+    "mod",
+    "arrow", #
+]
+
+def get_operand_name(operand: str):
+    return named_operands[human_operands.index(operand)]
+
+def get_overload_name(node):
+    left_n = hlt(node.children[0].tn).replace(" ", "_");
+    center_n = get_operand_name(node.tkname());
+    res = left_n+"_"+center_n
+    if node.children[1].tn.unknown():
+        return res;
+    else:
+        return res+"_"+hlt(node.children[1].tn).replace(" ", "_");
+
 logic_operands = [">", "<", ">=", "<=", "==", "!=", "&&", "||"]
 
 human_unarys = [
@@ -662,7 +702,8 @@ class compiler_state:
         self.declared_macros: dict[str, Node] = {}
         
         self.current_namespace = self.global_vars
-        
+        self.current_funcname = ""
+
         self.constructor_blocks: list[Node] = []
     
 state = compiler_state()
@@ -671,6 +712,7 @@ node_stack: list[Node] = []
 macro_call_stack: list[Node] = []
 func_info_stack: list[typenode] = []
 loop_stack: list[int] = []
+overload_call_stack: list[str] = []
 compiled_func_decls: dict = {}
 
 def add_usr_var(node, parse_indentation):
@@ -828,6 +870,17 @@ def funcref_from_word(word: Node):
         word.kind = kind.FUNCREF
         return word
     compiler_error(word, "'&t' is not a declared function")
+
+def funcref_from_funcdecl(fd: Node):
+    nfd = Node()
+    if fd.tkname() in state.declared_funcs:
+        called = state.declared_funcs[fd.tkname()]
+        nfd.token = fd.token
+        nfd.tn = typenode.from_node(called)
+        nfd.tn.outptrl+=1
+        nfd.kind = kind.FUNCREF
+        return nfd
+    compiler_error(fd, "'&t' is not a declared function");
 
 def sizeof(tn: typenode): # in bytes please
     if tn.isptr():
@@ -1155,6 +1208,7 @@ def parse_funcdecl(node):
     state.declared_funcs[node.tkname()] = node
     state.func_namespaces[node.tkname()] = state.func_namespaces.get(node.tkname(), {})
     state.current_namespace = state.func_namespaces[node.tkname()]
+    state.current_funcname = node.tkname()
     tokens.expect("(")
     parse_indentation += 1
     node.children = parse_named_args(")")
@@ -1163,6 +1217,7 @@ def parse_funcdecl(node):
     parse_indentation -= 1
     node.block = parse_block()
     state.current_namespace = state.global_vars
+    state.current_funcname = ""
 
 def parse_funcall(node):
     while tokens.current()[-1] != ")":
@@ -1460,10 +1515,12 @@ def parse_primary():
     elif token[-1] == "construct":
         state.func_namespaces["main"] = state.func_namespaces.get("main", {})
         state.current_namespace = state.func_namespaces["main"]
+        state.current_funcname = "main"
         node.block = parse_block()
         node.kind = kind.NULL
         state.constructor_blocks.append(node.block)
         state.current_namespace = state.global_vars
+        state.current_funcname = ""
     
     elif token[-1] == "unroll":
         node = parse_unroll()
@@ -1629,7 +1686,8 @@ def parse_expression(importance): # <- wanted to write priority
             case "=":
                 right_node = parse_expression(get_importance(op_token))
                 op_node.tn = right_node.tn
-                node.tn = right_node.tn
+                if node.tn.unknown():
+                    node.tn = right_node.tn
                 if node.kind == kind.WORD:
                     if right_node.tn.unknown():
                         compiler_error(node, "right hand side is incomplete\nthe type cannot be derived, to fix this declare the type manually")
@@ -1655,7 +1713,12 @@ def parse_expression(importance): # <- wanted to write priority
 
             case _:
                 right_node = parse_expression(get_importance(op_token))
+
         op_node.children.append(right_node)
+
+        if (overload:=state.declared_funcs.get(get_overload_name(op_node))):
+            op_node.tn = overload.tn.simple()
+
         node = op_node
     
     if parse_indentation and not node.block:
@@ -1663,6 +1726,7 @@ def parse_expression(importance): # <- wanted to write priority
         if incdec_node:
             incdec_node.kind += 2
             incdec_node.block = node;
+            incdec_node.tn = node.tn
             node = incdec_node;
 
     
@@ -1771,6 +1835,66 @@ def compile_return(block, ret, level):
         else:
             out_writeln(f"ret {rlt(funcinfo)} {ret}", level)
 
+# usually on a compile call, you have a node with two children:
+# dest_node is the name of the function
+# src_node is a node with the children being the passed args
+# i need a method that creates this from a single node containing the children
+# and the tkname being in the node...
+    
+
+def compile_call(callable_node, args_node, level, assignable=0):
+    nlevel = level+1
+    arg_coms = []
+    arg_names = []
+
+    if callable_node.kind == kind.WORD:
+        callable_node = funcref_from_word(callable_node)
+    call_com = compile_node(callable_node, level)
+
+    ret_tn = call_com.tn.simple()
+    if call_com.val in ("@va_start", "@va_end", "@va_copy"):
+        to_call = "@llvm."+call_com.val[1:]
+    else:
+        to_call = call_com.val
+    # if callable_node.tkname() in state.declared_funcs:
+    #     funcinfo = typenode.from_node(state.declared_funcs[callable_node.tkname()])
+    if call_com.tn.is_callable():
+        funcinfo = call_com.tn
+    else:
+        compiler_error(callable_node, "Not a callable")
+
+    var_length = 0
+    if len(funcinfo.children):
+        if funcinfo.children[-1].type == sw_type.ANY:
+            var_length = 1
+        
+    if not var_length and len(funcinfo.children) != len(args_node.children):
+        compiler_error(funcinfo, "refer to implementation:", 0)
+        compiler_error(callable_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}:\n");
+        
+    for idx, arg in enumerate(args_node.children):
+        arg_com = compile_node(arg, level, assignable and not idx)
+        arg_coms.append(arg_com)
+        arg_names.append(arg_com.val)
+
+        if var_length:
+            if idx < len(funcinfo.children)-1 and not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
+                compiler_error(arg, f"Vargument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg.tn)}")
+        else:
+            if not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
+                compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg_com.tn)}")
+    if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
+        out_write(f"call void {to_call}(", level); iota()
+    else:
+        out_write(f"%{iota()} = call {rlt(ftn(funcinfo.type, funcinfo.ptrl))} {to_call}(", level)
+    for idx, arg in enumerate(arg_coms):
+        if idx:
+            out_write(", ", 0)
+        out_write(f"{rlt(arg.tn)} {arg.val}", 0)
+    out_writeln(")", 0)
+    
+    return RegInfo(f"%{iota(-1)}", ret_tn, kind.FUNCCALL)
+                
 
 def both_numlit(node1, node2):
     return node1.kind == kind.NUM_LIT and node2.kind == kind.NUM_LIT
@@ -1783,7 +1907,7 @@ def compile_node(node, level, assignable = 0):
     nlevel = level+1
     arg_names = []
     arg_coms = []
-    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), rlt(node.tn), "||",)
+    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), rlt(node.tn), assignable, "||",)
 
     if len(node.children) > 1:
         dest_node = node.children[0]
@@ -1851,6 +1975,8 @@ def compile_node(node, level, assignable = 0):
             return RegInfo(f"@str.{node.int_val}", node.tn, node.kind)
 
         case kind.NUM_LIT:
+            if assignable:
+                compiler_error(node, "Cannot get a pointer to a const value");
             return RegInfo(f"{node.tkname()}", node.tn, node.kind)
         
         case kind.LIST_LIT:
@@ -1942,6 +2068,8 @@ def compile_node(node, level, assignable = 0):
             return com
         
         case kind.AINC | kind.ADEC:
+            if assignable:
+                compiler_error(node, "cannot get a pointer to a post increment/decrement operation")
             com = compile_node(node.block, level, 1)
             out_writeln(f"%{iota()} = load {rlt(com.tn-1)}, ptr {com.val}", level)
             out_writeln(f"%{iota()} = add {rlt(com.tn-1)} %{iota(-1)-1}, {1 if node.kind == kind.AINC else -1}", level)
@@ -1970,10 +2098,18 @@ def compile_node(node, level, assignable = 0):
             return com 
 
         case kind.OPERAND:
-            if node.tkname() == "=":
+            overload_n = get_overload_name(node)
+            if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
+                func = funcref_from_funcdecl(func)
+                has_self = 0
+                if func.tn.simple().unknown():
+                    has_self = 1
+                ret_com = compile_call(func, node, level, has_self)
+                return ret_com
+
+            elif node.tkname() == "=":
                 src_com = compile_node(src_node, level)
                 if dest_node.tn.unknown():
-                    # compiler_error(dest_node, f"Assuming type of source {hlt(src_node.tn)}", 0)
                     dest_node.tn = src_com.tn
                 dest_com = compile_node(dest_node, level, 1)
 
@@ -2050,53 +2186,7 @@ def compile_node(node, level, assignable = 0):
                 return com
 
             elif node.tkname() == "(": # FUNCALL, funcall, FUNCCALL, funccall
-                if dest_node.kind == kind.WORD:
-                    dest_node = funcref_from_word(dest_node)
-                dest_com = compile_node(dest_node, level)
-                ret_tn = dest_com.tn.simple()
-                if dest_com.val in ("@va_start", "@va_end", "@va_copy"):
-                    to_call = "@llvm."+dest_com.val[1:]
-                else:
-                    to_call = dest_com.val
-                # if dest_node.tkname() in state.declared_funcs:
-                #     funcinfo = typenode.from_node(state.declared_funcs[dest_node.tkname()])
-                if dest_com.tn.is_callable():
-                    funcinfo = dest_com.tn
-                else:
-                    compiler_error(dest_node, "Not a callable")
-
-                var_length = 0
-                if len(funcinfo.children):
-                    if funcinfo.children[-1].type == sw_type.ANY:
-                        var_length = 1
-                    
-                if not var_length and len(funcinfo.children) != len(src_node.children):
-                    compiler_error(funcinfo, "refer to implementation:", 0)
-                    compiler_error(dest_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}:\n");
-                    
-                for idx, arg in enumerate(src_node.children):
-                    arg_com = compile_node(arg, level)
-                    arg_coms.append(arg_com)
-                    arg_names.append(arg_com.val)
-
-                    if var_length:
-                        if idx < len(funcinfo.children)-1 and not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
-                            compiler_error(arg, f"Vargument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg.tn)}")
-                    else:
-                        if not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
-                            compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg_com.tn)}")
-                if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
-                    out_write(f"call void {to_call}(", level); iota()
-                else:
-                    out_write(f"%{iota()} = call {rlt(ftn(funcinfo.type, funcinfo.ptrl))} {to_call}(", level)
-                for idx, arg in enumerate(arg_coms):
-                    if idx:
-                        out_write(", ", 0)
-                    out_write(f"{rlt(arg.tn)} {arg.val}", 0)
-                out_writeln(")", 0)
-                
-                return RegInfo(f"%{iota(-1)}", ret_tn, kind.FUNCCALL)
-                
+                return compile_call(dest_node, src_node, level, assignable)
             else:
                 for idx, arg in enumerate(node.children):
                     tcom = compile_node(arg, level)
@@ -2262,6 +2352,7 @@ def compile_node(node, level, assignable = 0):
                     
         case kind.FUNCDECL:
             state.current_namespace = state.func_namespaces[node.tkname()]
+            state.current_funcname = node.tkname()
             func_info_stack.append(node.tn)
             if node.tkname() in compiled_func_decls:
                 compiler_error(compiled_func_decls[node.tkname()], "Previously declared here", 0);
