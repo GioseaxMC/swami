@@ -703,7 +703,7 @@ class compiler_state:
         
         self.current_namespace = self.global_vars
         self.current_funcname = ""
-
+        self.anonymous_structs: dict[Node] = {}
         self.constructor_blocks: list[Node] = []
     
 state = compiler_state()
@@ -933,7 +933,11 @@ def parse_type_base(ptrl):
     typename = tokens.consume()
     if typename[-1] == "typeof":
         tn = parse_primary().tn
-        rtype, ptrl = tn.rtype, tn.ptrl;
+        rtype, ptrl = tn.type, tn.ptrl;
+    elif typename[-1] == "struct":
+        node = Node()
+        parse_anonymous_struct(node)
+        rtype, ptrl = node.tn.type, node.tn.ptrl
     elif typename[-1] in human_type:
         rtype = human_type.index(typename[-1])
     else:
@@ -950,9 +954,9 @@ def parse_type_base(ptrl):
 def parse_type():
     tn = typenode()
     tn.token = tokens.current()
-    if tn.token[-1] == "typeof":
-        tokens.consume()
-        return parse_primary().tn.copy()
+    #if tn.token[-1] == "typeof":
+    #    tokens.consume()
+    #    return parse_primary().tn.copy()
     tn.type, tn.ptrl = parse_type_base(0)
     tn.outptrl = 0
     if tokens.current()[-1] == "(":
@@ -1244,6 +1248,7 @@ def parse_unnamed_args(closer):
     children = []
     while tokens.current()[-1] != closer:
         children.append(parse_unnamed_arg(closer))
+    tokens.expect(closer)
     return children
 
 def parse_extern(node):
@@ -1254,7 +1259,6 @@ def parse_extern(node):
     state.declared_funcs[node.tkname()] = node
     tokens.expect("(")
     node.children = parse_unnamed_args(")")
-    tokens.expect(")")
 
 def parse_struct(node):
     node.token = tokens.consume()
@@ -1273,6 +1277,30 @@ def parse_struct(node):
     node.tn.ptrl = 0
     node.tn.type = len(llvm_type)-1
     state.declared_structs[node.tkname()] = node
+
+def parse_anonymous_struct(node):
+    node.token = tokens.current()
+    tokens.expect("{")
+    node.children = parse_named_args("}")
+    size = 0
+    max_size = 0
+    human_name = "astruct_"+"_".join(hlt(nd.tn).replace(" ", "_") for nd in node.children)
+    node.tn.ptrl = 0
+    if human_name in human_type:
+        node.tn.type = human_type.index(human_name)
+        return;
+    for nd in node.children:
+        y = sizeof(nd.tn)
+        max_size = max(max_size, get_max_size(nd.tn))
+        size = size if not y else size+((y-size%y) % y)+y
+    size = size if not max_size else size+(max_size - size%max_size) % max_size
+    sizeof_type.append(size)
+    human_type.append(human_name)
+    llvm_name = f"%anon.struct.{len(state.anonymous_structs)}"
+    state.anonymous_structs[llvm_name] = node
+    llvm_type.append(llvm_name)
+    state.declared_structs[human_name] = node
+    node.tn.type = len(llvm_type)-1
 
 def parse_vardecl(node):
     node.token = tokens.consume()
@@ -1533,8 +1561,18 @@ def parse_primary():
 
     elif token[-1] == "struct":
         # assume_global(token)
-        node.kind = kind.STRUCT
-        parse_struct(node)
+        if parse_indentation:
+            print("here");
+            parse_anonymous_struct(node)
+            node.kind = kind.VARDECL
+            node.tn.check_valid()
+            if uisalnum(tokens.current()[-1]):
+                node = parse_vardecl(node)
+            else:
+                node.kind = kind.TYPE
+        else:
+            node.kind = kind.STRUCT
+            parse_struct(node)
 
     elif token[-1] == "return":
         # forbid_global(token)
@@ -2100,7 +2138,6 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             overload_n = get_overload_name(node)
-            print(overload_n)
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
@@ -2490,6 +2527,10 @@ iota(1)
 for string in state.declared_strings:
     out_writeln(f"@str.{iota()-1} = global [{llvm_len(string)-1} x i8] c\"{string[1:-1]}\\00\"", 0)
 out_writeln("", 0)
+
+iota(1)
+for key, item in state.anonymous_structs.items():
+    out_writeln(f"{key} = type {{{", ".join(rlt(nd.tn) for nd in item.children)}}}", 0)
 
 iota(1)
 for vector in state.declared_lists:

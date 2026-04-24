@@ -14,7 +14,6 @@ func int main()
     if !(e=json_get(e, "name"))
         return 1;
 
-    
     println(e.str);
     
     json_print(&json);
