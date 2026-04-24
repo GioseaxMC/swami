@@ -14,7 +14,7 @@ func int main()
 {
     arr = new_array(void);
     
-    println(&arr);
+    println(cast &arr as ptr void);
 
     arr+4;
 }

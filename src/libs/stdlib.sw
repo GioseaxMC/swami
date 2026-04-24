@@ -157,6 +157,7 @@ macro __fmt(type) {
         char: "%c",
         bool: "%d",
         ptr char: "%s",
+        ptr void: "%p",
         default: "%%?"
     );
 }
@@ -174,6 +175,7 @@ macro __print_once(x) {
         char: printf(__fmt(x), x),
         bool: printf(__fmt(x), x),
         ptr char: printf(__fmt(x), x),
+        ptr void: printf(__fmt(x), x),
         default: printer->(x)
     );
 }
