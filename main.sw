@@ -2,15 +2,19 @@ include {
     "stdlib.sw"
 }
 
-macro new_array(type) {
-    func void astruct_ptr_@type@_sum_int(ptr void _, int x) { println(x); };
+func void astruct_ptr_void_int_int_sum_int(ptr void _, int x) {
+    println(x);
+}
 
-    { struct { ptr type items, i32 cap, i32 len }; };    
+macro new_array(type) {
+    { struct { ptr type items, int cap, int len }; };    
 }
 
 func int main()
 {
     arr = new_array(void);
+    
+    println(&arr);
 
     arr+4;
 }

@@ -904,11 +904,16 @@ def type_cmp(type1, type2):
     if type1.isptr() and type2.isptr():
         return 1
     else:
-        cond = 1
         for c1, c2 in zip(type1.children, type2.children):
             if not type_cmp(c1, c2):
                 return 0
         return (type1.type, type1.ptrl, type1.count) == (type2.type, type2.ptrl, type2.count)
+
+def exact_type_cmp(type1, type2):
+    for c1, c2 in zip(type1.children, type2.children):
+        if not exact_type_cmp(c1, c2):
+            return 0;
+    return (type1.type, type1.ptrl, type1.count) == (type2.type, type2.ptrl, type2.count)
 
 def parse():
     global parse_indentation
@@ -943,8 +948,8 @@ def parse_type_base(ptrl):
     else:
         parser_error(typename, "Expected typename but got '&t'")
     if rtype == sw_type.VOID:
-        if ptrl:
-            rtype = sw_type.CHAR
+        # if ptrl:
+        #     rtype = sw_type.CHAR
         return rtype, ptrl
     elif rtype == sw_type.PTR:
         return parse_type_base(ptrl+1)
@@ -1073,7 +1078,6 @@ def parse_unroll():
     global tokens
     node = Node()
     node.token = tokens.prev();
-    node.custom_data = {}
     tokens.expect("(")
     arg_name = tokens.consume()
     tokens.expect(")")
@@ -1084,6 +1088,8 @@ def parse_unroll():
         if tokens.current()[-1] != ")":
             tokens.expect(",")
     tokens.expect(")")
+    
+    open_penis = tokens.current()
 
     bodytks_og = parse_block_as_tokens()
     
@@ -1103,7 +1109,7 @@ def parse_unroll():
         tokens = Manager(bodytks)
         inner_node = Node()
         inner_node.kind = kind.BLOCK
-        inner_node.token = tokens.current()
+        inner_node.token = open_penis
         while tokens.more():
             if (expr:=parse_expression(0)).kind != kind.NULL:
                 inner_node.children.append(expr)
@@ -1180,10 +1186,10 @@ def parse_macro_call():
 
 def parse_block():
     global parse_indentation; parse_indentation+=1
-    tokens.expect("{")
     block = Node()
     block.token = tokens.current()
     block.kind = kind.BLOCK
+    tokens.expect("{")
     while tokens.current()[-1] != "}":
         if (node:=parse_expression(0)).kind != kind.NULL:
             if node.kind == kind.WORD:
@@ -1406,7 +1412,7 @@ def parse_generic():
             node.custom_data.append(tn)
             tokens.expect(":")
             expr = parse_expression(0)
-            if type_cmp(tn, node.block.tn) and type_cmp(tn.base(), node.block.tn.base()):
+            if exact_type_cmp(tn, node.block.tn) and exact_type_cmp(tn.base(), node.block.tn.base()):
                 node.tn = expr.tn
             node.children.append(expr)
         else:
@@ -1562,7 +1568,6 @@ def parse_primary():
     elif token[-1] == "struct":
         # assume_global(token)
         if parse_indentation:
-            print("here");
             parse_anonymous_struct(node)
             node.kind = kind.VARDECL
             node.tn.check_valid()
@@ -1986,13 +1991,12 @@ def compile_node(node, level, assignable = 0):
         case kind.BLOCK:
             if node.tkname() in state.declared_macros:
                 macro_call_stack.append(node)
-            
             com = RegInfo("invalid", ftn(sw_type.INT), node.kind)
             for arg in node.children:
                 com = compile_node(arg, level, assignable)
                 if com.kind in (kind.RET, kind.BREAK, kind.CONTINUE):
                     break
-            if node.tkname() in state.declared_macros:
+            if node in macro_call_stack:
                 macro_call_stack.pop()
             return com
 
@@ -2028,7 +2032,7 @@ def compile_node(node, level, assignable = 0):
             return RegInfo(f"@list.{node.int_val}", node.tn, node.kind)
 
         case kind.TYPE:
-            ...
+            return RegInfo(f"zeroinitializer", node.tn, node.kind)
 
         case kind.RESERVE:
             var = iota()
@@ -2130,7 +2134,7 @@ def compile_node(node, level, assignable = 0):
             bcom = compile_node(node.block, level)
             default_case = node.children.pop()
             for expr, nwt in zip(node.children, node.custom_data):
-                if type_cmp(nwt, bcom.tn):
+                if exact_type_cmp(nwt, bcom.tn):
                     com = compile_node(expr, level)
                     return com
             com = compile_node(default_case, level)
@@ -2138,6 +2142,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             overload_n = get_overload_name(node)
+            # print(overload_n);
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
@@ -2250,7 +2255,10 @@ def compile_node(node, level, assignable = 0):
                         elif arg_coms[1].kind == kind.NUM_LIT:
                             node_tn = arg_coms[0].tn
                         else:
-                            compiler_error(node, f"Type mismatch {hlt(arg_coms[0].tn)} != {hlt(arg_coms[1].tn)}");
+                            compiler_error(node, f"Type mismatch {hlt(arg_coms[0].tn)} != {hlt(arg_coms[1].tn)}", 1);
+                            compiler_error(node, f"Cannot perform operation\nplease implement the '{overload_n}' overload method")
+                        if node_tn.isstruct():
+                            compiler_error(node, f"Cannot perform operation\nplease implement the '{overload_n}' overload method")
                 else:
                     node_tn = arg_coms[1].tn.copy()
                 casted_src = arg_names[1]
