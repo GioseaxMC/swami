@@ -543,8 +543,9 @@ class Node:
     def find_by_name(self, name, node):
         for idx, arg in enumerate(self.children):
             if arg.tkname() == name:
-                return idx
-        compiler_error(node, f"'{name}' is not an attribute for '{self.tkname()}'")
+                return [idx, 1]
+        return [0,0]
+        # compiler_error(node, f"'{name}' is not an attribute for '{self.tkname()}'")
 
     def tkname(self):
         return self.token[-1]
@@ -1816,13 +1817,21 @@ def parse_expression(importance): # <- wanted to write priority
 
                     if node.tn.unknown():
                         compiler_error(node, f"&t is incomplete or undeclared and cannot be examined");
-                    if not node.tn.isstruct():
-                        compiler_error(node, f"Can only extract field from structs, '{hlt(node.tn)}' is not a struct");
+                    # if not node.tn.isstruct():
+                    #     compiler_error(node, f"Can only extract field from structs, '{hlt(node.tn)}' is not a struct");
 
                     struct_node = state.declared_structs[hlt(node.tn.base())]
-                    field_id = struct_node.find_by_name(right_node.tkname(), right_node)
-                    field_node = struct_node.children[field_id]
-                    op_node.tn = field_node.tn
+                    ret = struct_node.find_by_name(right_node.tkname(), right_node)
+                    if ret[1]:
+                        field_id = ret[0]
+                        field_node = struct_node.children[field_id]
+                        op_node.tn = field_node.tn
+                    else:
+                        func = state.declared_funcs.get("inspect_"+hlt(node.tn), None)
+                        if func:
+                            op_node.tn = func.tn.simple()
+                        else:
+                            op_node.tn = ftn(sw_type.VOID)
                 else:
                     ...
                     # parser_error(right_node.token, "Expected a struct field");
@@ -1979,7 +1988,7 @@ def compile_call(callable_node, args_node, level, assignable=0):
         
     if not var_length and len(funcinfo.children) != len(args_node.children):
         compiler_error(funcinfo, "refer to implementation:", 0)
-        compiler_error(callable_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}:\n");
+        compiler_error(callable_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}, not {len(args_node.children)}:\n");
         
     for idx, arg in enumerate(args_node.children):
         arg_com = compile_node(arg, level, assignable and not idx)
@@ -2207,12 +2216,26 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             overload_n = get_overload_name(node)
-            # print(overload_n);
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
+                
+                for nd in node.children:
+                    if nd.kind == kind.STRUCTFIELD:
+                        nd.kind = kind.STR_LIT
+                        nd.tn = ftn(sw_type.CHAR, 1)
+                        state.section_select(state.string_section)
+                        state.writeln(f"@str.{len(state.declared_strings)} = global [{len(nd.tkname())+1} x i8] c\"{nd.tkname()}\\00\"")
+                        nd.int_val = len(state.declared_strings)
+                        state.declared_strings.append(nd.tkname())
+                        state.section_return()
+                        print(human_kind[nd.kind])
+
                 if func.tn.simple().unknown():
                     has_self = 1
+                if node.tkname() == "(":
+                    args = node.children.pop().children
+                    node.children += args
                 ret_com = compile_call(func, node, level, has_self)
                 return ret_com
 
@@ -2269,7 +2292,10 @@ def compile_node(node, level, assignable = 0):
                 if not dest_com.tn.isstruct():
                     compiler_error(node, "Can only extract field from structs");
                 struct_node = state.declared_structs[hlt(ftn(dest_node.tn.type, 0))]
-                field_id = struct_node.find_by_name(src_node.tkname(), src_node)
+                ret = struct_node.find_by_name(src_node.tkname(), src_node)
+                if not ret[1]:
+                    compiler_error(src_node, "Not a struct member")
+                field_id = ret[0]
                 field_node = struct_node.children[field_id]
                 
 
@@ -2295,7 +2321,10 @@ def compile_node(node, level, assignable = 0):
                 return com
 
             elif node.tkname() == "(": # FUNCALL, funcall, FUNCCALL, funccall
-                return compile_call(dest_node, src_node, level, assignable)
+                if dest_node.tn.is_callable():
+                    return compile_call(dest_node, src_node, level, assignable)
+                else:
+                    compiler_error(dest_node, "Cannot be called")
             else:
                 for idx, arg in enumerate(node.children):
                     tcom = compile_node(arg, level)
@@ -2436,6 +2465,17 @@ def compile_node(node, level, assignable = 0):
 
         case kind.REFPTR:
             dest_com = compile_node(node.block, level)
+            
+            overload_n = "deref_"+hlt(dest_com.tn).replace(" ","_")
+            if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
+                func = funcref_from_funcdecl(func)
+                has_self = 0
+                if func.tn.simple().unknown():
+                    has_self = 1
+                node.children.append(node.block)
+                ret_com = compile_call(func, node, level, has_self)
+                return ret_com
+
             if not dest_com.tn.isptr():
                 compiler_error(node, f"Cannot dereference type '{hlt(dest_com.tn)}'")
             state.writeln(f"%{iota()} = getelementptr {rlt(dest_com.tn-1)}, {rlt(dest_com.tn)} {dest_com.val}, i64 0", level)
@@ -2509,7 +2549,6 @@ def compile_node(node, level, assignable = 0):
 
             state.section_return()
             iota_return()
-            print(hlt(funcref_from_funcdecl(node).tn))
             return RegInfo("@"+node.tkname(), funcref_from_funcdecl(node).tn, node.kind)
         
         case kind.STRUCT:

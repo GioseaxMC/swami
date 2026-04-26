@@ -1,21 +1,29 @@
+
+
 include {
     "stdlib.sw"
 }
 
+struct String {
+    ptr char cstr,
+    int len,
+    int cap,
+}
 
-func int main()
+func String String_call(String str, ptr char cstr, int len) {
+    str.cstr = cstr;
+    str.len = len;
+    str.cap = len;
+    str;
+}
+
+func void Printer_when_String(ptr void _, String self) {
+    printf("%.*s", self.len, self.cstr);
+}
+
+func void main()
 {
-
-    struct Val {
-        int a,
-    };
-    t = func int two() { 2; };
-
-    list = [
-        1, t(), 3, 4
-    ];
-
-    for(i=0, list[i], ++i, {
-        println(list[i]);
-    });
+    str = (String)("Hello There", 11);
+    
+    println(str);
 }
