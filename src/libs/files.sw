@@ -42,7 +42,7 @@ func int write_file(ptr char filename, ptr char contents) {
     int len = strlen(contents);
     int written = fwrite(contents, 1, len, file);
     
-    if (written =! len) {
+    if (written != len) {
         fclose(file);
         return FAILED_TO_WRITE;
     };
