@@ -85,6 +85,7 @@ class sw_type:
     VOID = iota()
     CHAR = iota()
     BOOL  = iota()
+    # TEMPLATE  = iota()
     ANY = iota()
 
 human_type = [
@@ -96,6 +97,7 @@ human_type = [
     "void",
     "char",
     "bool",
+    # "type",
     "<>",
 ]
 
@@ -108,6 +110,7 @@ llvm_type = [
     "void",
     "i8",
     "i1",
+    # "; template type leaked",
     "...",
 ]
 
@@ -120,6 +123,7 @@ sizeof_type = [
     0,
     1,
     1,
+    # 0,
     0
 ]
 
@@ -271,6 +275,7 @@ human_operands = [
     "@",
     "%",
     "->",
+    "<-",
 ]
 
 named_operands = [
@@ -299,6 +304,7 @@ named_operands = [
     "join",
     "mod",
     "when", #
+    "templated", #
 ]
 
 def get_operand_name(operand: str):
@@ -434,6 +440,13 @@ class typenode:
         self.outptrl = 0
         self.count = 0
         self.children = []
+        self.template: typenode = None
+
+    def representation(self):
+        return hlt(self) \
+            .replace(" ","_") \
+            .replace("(","_") \
+            .replace(")","_")
     
     def unknown(self):
         return self.type == sw_type.VOID and not self.isptr()
@@ -531,7 +544,7 @@ def ftn(t, p=0):
 class Node:
     def __init__(self):
         self.token: tuple = None
-        self.string_val: str = ""
+        self.string_val: str = None
         self.int_val: int = 0
         self.kind: int = kind.NULL
         self.children: list[Node] = []
@@ -548,6 +561,15 @@ class Node:
         # compiler_error(node, f"'{name}' is not an attribute for '{self.tkname()}'")
 
     def tkname(self):
+        if self.string_val:
+            return self.string_val
+        return self.token[-1]
+    
+    def representation(self):
+        if self.string_val:
+            return self.string_val
+        if self.kind == kind.TYPE:
+            return self.tn.representation()
         return self.token[-1]
 
     def isterminator(self):
@@ -883,7 +905,7 @@ def get_importance(token):
         ("%",),
 
         ("(",),
-        (".","->"),
+        (".","->","<-"),
         ("[",),
     ]
     for idx, op in enumerate(ops):
@@ -1164,7 +1186,8 @@ def parse_unroll():
                 for tki, stm in enumerate(roller):
                     bodytks.insert(idx, stm)
                     idx+=1
-            idx+=1
+            else:
+                idx+=1
         tokens = Manager(bodytks)
         inner_node = Node()
         inner_node.kind = kind.BLOCK
@@ -1205,13 +1228,15 @@ def parse_macro_call():
     idx = 0
     while idx<len(current_macro_tks):
         arg = current_macro_tks[idx]
+        print(arg[-1], end=" ")
         if arg[-1] in arg_names:
             arg_idx = arg_names.index(arg[-1])
             current_macro_tks.pop(idx)
             for tki, tk in enumerate(macro_args[arg_idx]):
                 current_macro_tks.insert(idx, tk)
                 idx+=1
-        idx+=1
+        else:
+            idx+=1
 
     og_tokens = tokens
 
@@ -1574,7 +1599,6 @@ def parse_primary():
         
         state.section_select(state.list_section)
         if list_string not in state.declared_lists:
-            print(state.declared_lists)
             state.writeln(f"@list.{len(state.declared_lists)} = global {list_string}")
             state.declared_lists.append(list_string)
         state.section_return()
@@ -1600,14 +1624,15 @@ def parse_primary():
         node.tn = node.block.tn.copy()-1
     
     elif token[-1] == "@":
-        systk = tokens.consume()
+        instruction = tokens.consume()
         old_state = deepcopy(state)
         parse_indentation-=1
         node = parse_expression(0)
         parse_indentation+=1
-        if systk[-1] != os_name:
+        if instruction[-1] != os_name:
             state = old_state
             node.kind = kind.NULL
+                    
 
     elif token[-1] == "func":
         # assume_global(token)
@@ -2216,6 +2241,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             overload_n = get_overload_name(node)
+            print(overload_n)
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
