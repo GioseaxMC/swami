@@ -1,29 +1,17 @@
-
-
 include {
-    "stdlib.sw"
-}
-
-struct String {
-    ptr char cstr,
-    int len,
-    int cap,
-}
-
-func String String_call(String str, ptr char cstr, int len) {
-    str.cstr = cstr;
-    str.len = len;
-    str.cap = len;
-    str;
-}
-
-func void Printer_when_String(ptr void _, String self) {
-    printf("%.*s", self.len, self.cstr);
+    "stdlib.sw",
+    "memory.sw"
 }
 
 func void main()
 {
-    str = (String)("Hello There", 11);
+    println("Hello World");
     
-    println(str);
+    ptr ptr ptr void p = mm_alloc(sizeof(ptr void));
+    *p = mm_alloc(sizeof(ptr void)); # will shadow
+    **p = mm_alloc(sizeof(ptr void)); # will shadow
+    **p = mm_alloc(sizeof(ptr void)); # will shadow
+    **p = mm_alloc(sizeof(ptr void)); # will shadow
+    **p = mm_alloc(sizeof(ptr void)); # will shadow
+    *p = mm_alloc(sizeof(ptr void));
 }

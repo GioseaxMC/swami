@@ -139,6 +139,7 @@ func void __do_at_exit() {
     foreach(__at_exit_funcs, fn, {
         cast *fn as void()ptr ();
     });
+    arr_free(__at_exit_funcs);
 }
 
 

@@ -9,7 +9,7 @@ struct MemChunk {
 
 struct TapeCheckResults {
     int stack_count,
-        int heap_count,
+    int heap_count,
 }
 
 func MemChunk mc_malloc(int size) {
@@ -19,9 +19,7 @@ func MemChunk mc_malloc(int size) {
     return mc;
 }
 
-dynamic_array(MemChunk, MemChunks);
-
-MemChunks mcs;
+ptr MemChunk mcs;
 
 struct GarbageCollector {
     ptr void stack_tail,

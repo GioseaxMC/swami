@@ -51,7 +51,7 @@ macro arr_push(arr, item) {
     if (arr_len(arr) >= arr_capacity(arr)) arr_ensure((arr), arr_capacity(arr)*2);
 }
 macro arr_unordered_remove(arr, index) { (arr)[index] = (arr)[--arr_len(arr)]; }
-macro arr_free(arr) { free(arr_header((arr))); }
+macro arr_free(arr) { if is_array(arr) free(arr_header((arr))); }
 macro arr_exists(arr, idx) { idx<arr_len(arr); }
 macro foreach(da, _iter_n, body) {{
     _iter_n = arr_start(da);
