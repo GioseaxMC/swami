@@ -1024,9 +1024,9 @@ def exact_type_cmp(type1, type2):
 
 def parse():
     global parse_indentation
-    parse_indentation = 0
+    parse_indentation = -1
     while tokens.more():
-        if (node:=parse_primary()).kind != kind.NULL:
+        if (node:=parse_expression(0)).kind != kind.NULL:
             nodes.append(node)
 
 def parse_incdec():
@@ -1435,18 +1435,12 @@ def parse_vardecl(node):
     exists = add_usr_var(node, parse_indentation)
     if exists:
         node.kind = kind.VARREF
-    if tokens.current()[-1] == "=" and not parse_indentation:
-        if not exists: # makes redeclarations work as references
+    if 0 and tokens.current()[-1] == "=" and not parse_indentation:
+        if not exists:
             tokens.consume()
             node.block = parse_expression(0)
         else:
             parser_error(node.token, "Redeclaration of global variable '&t'")
-            op_node = Node()
-            op_node.token = tokens.consume()
-            op_node.kind = kind.OPERAND
-            op_node.children.append(node)
-            op_node.children.append(parse_expression(0))
-            node = op_node
     return node
 
 def parse_varref(node):
@@ -1506,7 +1500,7 @@ def parse_inclusion(node) -> Node:
             parse_indentation = 0
 
             while tokens.more():
-                if (pnode:=parse_primary()).kind != kind.NULL:
+                if (pnode:=parse_expression(0)).kind != kind.NULL:
                     node.children.append(pnode)
 
             parse_indentation = og_pi
@@ -1822,10 +1816,10 @@ def parse_primary():
         parse_funcref(node)
 
     elif tokenizable(token[-1]):
-        if parse_indentation:
-            node.kind = kind.WORD
-        else:
-            parser_error(token, "Unknown instruction '&t'")
+        node.kind = kind.WORD
+        # if parse_indentation:
+        # else:
+        #     parser_error(token, "Unknown instruction '&t'")
 
     else:
         parser_error(token, "Unexpected symbol '&t'")
@@ -2076,12 +2070,12 @@ def both_numlit(node1, node2):
 @compile_debug
 def compile_node(node, level, assignable = 0):
     global iota_counter, current_namespace;
+    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), rlt(node.tn), assignable, "||",)
     node_stack.append(node)
     check_global(node, level)
     nlevel = level+1
     arg_names = []
     arg_coms = []
-    debug("[COMPILING]:", human_kind[node.kind], node.tkname(), hlt(node.tn), rlt(node.tn), assignable, "||",)
 
     if len(node.children) > 1:
         dest_node = node.children[0]
@@ -2203,16 +2197,8 @@ def compile_node(node, level, assignable = 0):
                     state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
                 return RegInfo(f"%{node.tkname()}", node.tn+1, node.kind)
             else:
-                if node.block:
-                    com = compile_node(node.block, level)
-                    if node.tn.isptr():
-                        state.writeln(f"@{node.tkname()} = global {rlt(node.tn)} null", level)
-                    elif node.tn.isstruct():
-                        state.writeln(f"@{node.tkname()} = global {rlt(node.tn)} zeroinitializer", level)
-                    else:
-                        state.writeln(f"@{node.tkname()} = global {rlt(node.tn)} {com.val}", level)
-                else:
-                    state.writeln(f"@{node.tkname()} = global {rlt(node.tn)} zeroinitializer", level)
+                if not assignable:
+                    state.writeln(f"@{node.tkname()} = global {rlt(node.tn)} zeroinitializer ; ptr %{node.tkname()}", level)
                 return RegInfo(f"@{node.tkname()}", node.tn+1, node.kind)
 
         case kind.VARREF:
@@ -2304,15 +2290,17 @@ def compile_node(node, level, assignable = 0):
                 if dest_node.tn.unknown():
                     dest_node.tn = src_com.tn
                 dest_com = compile_node(dest_node, level, 1)
-
-                if src_com.tn.isptr() and dest_com.tn.isptr() and dest_com.tn.type == sw_type.CHAR:
-                    state.writeln(f"store ptr {src_com.val}, ptr {dest_com.val}", level)
-                elif src_com.kind == kind.NUM_LIT: # TODO: this was commented out, figure out why
-                    state.writeln(f"store {rlt(dest_com.tn-1)} {src_com.val}, ptr {dest_com.val} ; 09384", level)
-                elif not type_cmp(src_com.tn, dest_com.tn-1):
-                    compiler_error(node, f"Types don't match in assignment '{hlt(dest_com.tn-1)}' != '{hlt(src_com.tn)}'")
+                if level:
+                    if src_com.tn.isptr() and dest_com.tn.isptr() and dest_com.tn.type == sw_type.CHAR:
+                        state.writeln(f"store ptr {src_com.val}, ptr {dest_com.val}", level)
+                    elif src_com.kind == kind.NUM_LIT: # TODO: this was commented out, figure out why
+                        state.writeln(f"store {rlt(dest_com.tn-1)} {src_com.val}, ptr {dest_com.val} ; 09384", level)
+                    elif not type_cmp(src_com.tn, dest_com.tn-1):
+                        compiler_error(node, f"Types don't match in assignment '{hlt(dest_com.tn-1)}' != '{hlt(src_com.tn)}'")
+                    else:
+                        state.writeln(f"store {rlt(dest_com.tn-1)} {src_com.val}, ptr {dest_com.val} ; 43098", level) ## edited
                 else:
-                    state.writeln(f"store {rlt(dest_com.tn-1)} {src_com.val}, ptr {dest_com.val} ; 43098", level) ## edited
+                    state.writeln(f"{dest_com.val} = global {rlt(src_com.tn)} {src_com.val}")
                 return src_com
             
             elif node.tkname() == "[":
@@ -2709,6 +2697,13 @@ def compile_nodes(nodes):
     iota(1)
     for node in nodes:
         compile_node(node, 0)
+
+if "main" not in state.declared_funcs:
+    x = state.global_vars.get("main")
+    if x:
+        compiler_error(x, "Cannot declare the main entry point as a lambda assignment");
+    else:
+        compiler_error(nodes[0], "Missing main function, please declare it. eg: 'func int main() { 0; };'")
 
 for node in nodes:
     print_node(node)
