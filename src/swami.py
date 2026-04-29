@@ -8,6 +8,8 @@ from copy import copy, deepcopy
 from platform import system
 argc = len(argv)
 import argparse
+from string import ascii_letters
+from random import choice
 
 cwd = Path(os.getcwd())
 cwd_str = str(Path(os.getcwd()))
@@ -275,7 +277,7 @@ human_operands = [
     "@",
     "%",
     "->",
-    "<-",
+    "=>",
 ]
 
 named_operands = [
@@ -304,7 +306,7 @@ named_operands = [
     "join",
     "mod",
     "when", #
-    "templated", #
+    "does", #
 ]
 
 def get_operand_name(operand: str):
@@ -318,6 +320,12 @@ def get_overload_name(node):
         return res;
     else:
         return res+"_"+hlt(node.children[1].tn).replace(" ", "_");
+
+scrambles = []
+def get_scramble():
+    while (x := "".join(choice(ascii_letters) for _ in range(16))) not in scrambles:
+        scrambles.append(x)
+        return x
 
 logic_operands = [">", "<", ">=", "<=", "==", "!=", "&&", "||"]
 
@@ -746,6 +754,7 @@ class compiler_state:
 
         self.sections = []
         self.current_section = None
+        self.blocked = 0
         
         self.section_return_stack = []
     
@@ -762,18 +771,31 @@ class compiler_state:
 
     def current_funcname(self):
         return self.funcname_stack[-1]
+    
+    def section_off(self):
+        self.blocked += 1
+    
+    def section_on(self):
+        if self.blocked:
+            self.blocked -= 1
 
     def section_prepend(self):
+        if self.blocked:
+            return
         self.section_return_stack.append(self.current_section)
         self.current_section = []
         self.sections.insert(0, self.current_section)
 
     def section_new(self):
+        if self.blocked:
+            return
         self.section_return_stack.append(self.current_section)
         self.current_section = []
         self.sections.append(self.current_section)
 
     def write(self, content: str, level: int = 0):
+        if self.blocked:
+            return
         self.current_section.append("  "*level+content)
     
     def writeln(self, content: str,  level: int = 0):
@@ -781,10 +803,14 @@ class compiler_state:
         self.write("\n", 0);
     
     def section_select(self, section):
+        if self.blocked:
+            return
         self.section_return_stack.append(self.current_section)
         self.current_section = section
 
     def section_return(self):
+        if self.blocked:
+            return
         self.current_section = self.section_return_stack.pop()
 
 state = compiler_state()
@@ -1061,6 +1087,8 @@ def parse_type():
     while tokens.current()[-1] == human_type[sw_type.PTR]:
         tokens.consume()
         tn.outptrl += 1
+    if len(tn.children) and not tn.outptrl:
+        parser_error(tn.token, f"Function type must be a pointer: {hlt(tn)} ptr <- with ptr at the end")
     return tn
 
 def parse_named_arg(closer):
@@ -1228,7 +1256,6 @@ def parse_macro_call():
     idx = 0
     while idx<len(current_macro_tks):
         arg = current_macro_tks[idx]
-        print(arg[-1], end=" ")
         if arg[-1] in arg_names:
             arg_idx = arg_names.index(arg[-1])
             current_macro_tks.pop(idx)
@@ -1293,9 +1320,13 @@ def parse_funcdecl(node):
     node.tn = parse_type()
     if node.tn.is_callable():
         parser_error(node.tn.token, "functions cannot return function type or function pointers, just use 'ptr void'")
-    node.token = tokens.consume()
-    if not tokenizable(node.tkname()):
-        parser_error(node.token, "Invalid function name")
+    if tokens.current()[-1] != "=>":
+        node.token = tokens.consume()
+        if not tokenizable(node.tkname()):
+            parser_error(node.token, "Invalid function name")
+    else:
+        tokens.expect("=>")
+        node.string_val = "lambda."+get_scramble()
     #if node.tkname() in state.declared_funcs:
     #    parser_error(state.declared_funcs[node.tkname()].token, "Previously declared here", 0);
     #    parser_error(node.token, "Cannot redeclare function")
@@ -2101,7 +2132,9 @@ def compile_node(node, level, assignable = 0):
 
         case kind.SIZEOF:
             # compiler_error(node, "THIS IS ACTIVELY COMPILED", 0)
+            state.section_off()
             com = compile_node(node.block, level)
+            state.section_on()
             USE_LEGACY_SIZEOF = 0
             if USE_LEGACY_SIZEOF:
                 state.writeln(f"%{iota()} = getelementptr {rlt(com.tn)}, {rlt(com.tn+1)} null, i32 1", level)
@@ -2166,7 +2199,8 @@ def compile_node(node, level, assignable = 0):
         case kind.VARDECL:
             if level:
                 state.writeln(f"%{node.tkname()} = alloca {rlt(node.tn)}", level)
-                state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
+                if not assignable:
+                    state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
                 return RegInfo(f"%{node.tkname()}", node.tn+1, node.kind)
             else:
                 if node.block:
@@ -2230,7 +2264,9 @@ def compile_node(node, level, assignable = 0):
             return com
 
         case kind.GENERIC:
+            state.section_off()
             bcom = compile_node(node.block, level)
+            state.section_on()
             default_case = node.children.pop()
             for expr, nwt in zip(node.children, node.custom_data):
                 if exact_type_cmp(nwt, bcom.tn):
@@ -2241,7 +2277,6 @@ def compile_node(node, level, assignable = 0):
 
         case kind.OPERAND:
             overload_n = get_overload_name(node)
-            print(overload_n)
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
@@ -2255,7 +2290,6 @@ def compile_node(node, level, assignable = 0):
                         nd.int_val = len(state.declared_strings)
                         state.declared_strings.append(nd.tkname())
                         state.section_return()
-                        print(human_kind[nd.kind])
 
                 if func.tn.simple().unknown():
                     has_self = 1
