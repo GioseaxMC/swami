@@ -1,24 +1,15 @@
 include { "stdlib.sw" }
-include { "collector.sw" }
+include { "memory.sw" }
 
 func int main() {
-    gc_init();
-    
     ptr int pint;
 
-    pint = gc.alloc(sizeof(int));
-    pint = gc.alloc(sizeof(int));
-    pint = gc.alloc(sizeof(int));
-    pint = gc.alloc(sizeof(int));
-    pint = gc.alloc(sizeof(int));
-    pint = gc.alloc(sizeof(int));
-
-    gc.free(pint); # the other pointers?
-
-    gc.end(); # they are seen here
+    pint = mm_alloc(sizeof(int));
+    pint = mm_alloc(sizeof(int));
+    pint = mm_alloc(sizeof(int));
+    pint = mm_alloc(sizeof(int));
+    pint = mm_alloc(sizeof(int));
+    pint = mm_alloc(sizeof(int));
 
     return 0;
 };
-
-
-

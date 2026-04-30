@@ -54,7 +54,7 @@ func ptr ptr Json js__parse_object(ptr TokenList tokens) {
         if current(tokens).token[0] != *"\"" return json_error(*current(tokens));
         get_string(key, *consume(tokens));
         expect(tokens, ":");
-        Json json = js__parse_primary(tokens);
+        json = js__parse_primary(tokens);
         *ht_get(dict, key) = json;
         if current(tokens).token[0] != *"}"
             expect(tokens, ",");

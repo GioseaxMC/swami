@@ -449,6 +449,9 @@ class typenode:
         self.count = 0
         self.children = []
         self.template: typenode = None
+    
+    def __str__(self):
+        return hlt(self)
 
     def representation(self):
         return hlt(self) \
@@ -492,6 +495,14 @@ class typenode:
         new.count = self.count
         new.children = self.children.copy()
         return new
+    
+    def set(self, other):
+        self.token = other.token
+        self.type = other.type
+        self.ptrl = other.ptrl
+        self.outptrl = other.outptrl
+        self.count = other.count
+        self.children = other.children.copy()
 
     def simple(self):
         new = typenode()
@@ -1055,8 +1066,8 @@ def parse_type_base(ptrl):
     else:
         parser_error(typename, "Expected typename but got '&t'")
     if rtype == sw_type.VOID:
-        # if ptrl:
-        #     rtype = sw_type.CHAR
+        if ptrl:
+            rtype = sw_type.CHAR
         return rtype, ptrl
     elif rtype == sw_type.PTR:
         return parse_type_base(ptrl+1)
@@ -1452,7 +1463,7 @@ def parse_varref(node):
         parser_error(node.token, "'&t' is undeclared, this is may an internal bug") # this should be unreachable but still
     
     var_info = namespace[node.tkname()]
-    node.tn = var_info.tn.copy()
+    node.tn.set(var_info.tn)
 
 included_files: list[str] = []
 def parse_inclusion(node) -> Node:
@@ -1716,9 +1727,9 @@ def parse_primary():
     elif token[-1] == "reserve":
         node.kind = kind.RESERVE
         size_tk = tokens.consume()
-        node.string_val = size_tk[-1]
-        if not node.string_val.isnumeric():
-            parser_error(size_tk, "Expected an integer literal, got '&t'")
+        if not size_tk[-1].isnumeric():
+            parser_error(tokens.prev(), "Expected an integer literal but got '&t'");
+        node.int_val = int(size_tk[-1])
         tokens.expect("as")
         node.token = tokens.consume()
         if not tokenizable(node.tkname()):
@@ -1855,8 +1866,6 @@ def parse_expression(importance): # <- wanted to write priority
                 if node.tn.unknown():
                     node.tn = right_node.tn
                 if node.kind == kind.WORD:
-                    if right_node.tn.unknown():
-                        compiler_error(node, "right hand side is incomplete\nthe type cannot be derived, to fix this declare the type manually")
                     node.kind = kind.VARDECL
                     add_usr_var(node, parse_indentation)
             case ".":
@@ -1973,7 +1982,7 @@ def compile_debug(func):
             compiler_error(children[0], "INTERNAL ERROR: Returned weird register data")
         node_stack.pop()
         if DEBUGGING:
-            state.writeln(f"; compiled node with kind: {human_kind[children[0].kind]} :: {rlt(children[0].tn)} :: name {children[0].tkname()} :: assignable {len(children) == 3 and children[-1]}", children[1])
+            state.writeln(f"; compiled node with kind: {human_kind[children[0].kind]} :: {children[0].tn} :: name {children[0].tkname()} :: assignable {len(children) == 3 and children[-1]}", children[1])
         return ret
     return wrapper
 
@@ -2162,7 +2171,7 @@ def compile_node(node, level, assignable = 0):
 
         case kind.RESERVE:
             var = iota()
-            state.writeln(f"%{var} = alloca [{node.string_val} x i8]", level)
+            state.writeln(f"%{var} = alloca [{node.int_val} x i8]", level)
             state.writeln(f"%{node.tkname()} = alloca ptr", level)
             state.writeln(f"store ptr %{var}, ptr %{node.tkname()}", level)
             return RegInfo(f"%{node.tkname()}", node.tn, node.kind)
@@ -2203,20 +2212,22 @@ def compile_node(node, level, assignable = 0):
 
         case kind.VARREF:
             com = RegInfo(node.tkname(), node.tn, node.kind)
+
+            if node.tn.unknown():
+                compiler_error(node, "adjusting type", 0)
+                node.tn = state.current_namespace()[node.tkname()].tn # check for variable related bugs
+                com.tn = state.current_namespace()[node.tkname()].tn.copy()
+
             if assignable:
                 if node.tkname() in state.global_vars:
                     com.val = f"@{node.tkname()}"
                 else:
-                    if node.tn.unknown():
-                        com.tn = state.current_namespace[node.tkname()].tn.copy()
                     com.val = f"%{node.tkname()}"
                 com.tn+=1
             else:
                 if node.tkname() in state.global_vars:
                     state.writeln(f"%{iota()} = load {rlt(node.tn)}, {rlt(node.tn+1)}  @{node.tkname()} ; 35439", level)
                 else:
-                    if node.tn.unknown():
-                        com.tn = state.current_namespace[node.tkname()].tn.copy()
                     state.writeln(f"%{iota()} = load {rlt(node.tn)}, {rlt(node.tn+1)} %{node.tkname()} ; 07523", level)
 
                 com.val = f"%{iota(-1)}"
@@ -2288,7 +2299,10 @@ def compile_node(node, level, assignable = 0):
             elif node.tkname() == "=":
                 src_com = compile_node(src_node, level)
                 if dest_node.tn.unknown():
+                    compiler_error(dest_node, f"here: {human_kind[dest_node.kind]}", 0)
                     dest_node.tn = src_com.tn
+                    if dest_node.kind == kind.VARDECL:
+                        state.current_namespace()[dest_node.tkname()].tn.set(dest_node.tn)
                 dest_com = compile_node(dest_node, level, 1)
                 if level:
                     if src_com.tn.isptr() and dest_com.tn.isptr() and dest_com.tn.type == sw_type.CHAR:
@@ -2310,7 +2324,7 @@ def compile_node(node, level, assignable = 0):
                     compiler_error(src_node, "Can only index using integer indices")
                 if not dest_com.tn.isptr():
                     compiler_error(dest_node, f"Can only index into pointers, cannot index {hlt(dest_com.tn)}")
-                state.writeln(f"%{iota()} = getelementptr {rlt(dest_com.tn-1)}, ptr {dest_com.val}, {rlt(src_com.tn)} {src_com.val}", level)
+                state.writeln(f"%{iota()} = getelementptr {rlt(dest_com.tn-1)}, ptr {dest_com.val}, {rlt(src_com.tn)} {src_com.val} ; {dest_node.tn} 30597", level)
                 if not assignable:
                     state.writeln(f"%{iota()} = load {rlt(dest_com.tn-1)}, ptr %{iota(-1)-1}", level)
                     com = RegInfo(f"%{iota(-1)}", dest_node.tn-1, node.kind)
@@ -2369,10 +2383,12 @@ def compile_node(node, level, assignable = 0):
                 return com
 
             elif node.tkname() == "(": # FUNCALL, funcall, FUNCCALL, funccall
+                if dest_node.kind == kind.WORD: # turns word into a function: word -> function
+                    dest_node = funcref_from_word(dest_node)
                 if dest_node.tn.is_callable():
                     return compile_call(dest_node, src_node, level, assignable)
                 else:
-                    compiler_error(dest_node, "Cannot be called")
+                    compiler_error(dest_node, "Cannot be called, as the type is not a function (or a pointer to it)")
             else:
                 for idx, arg in enumerate(node.children):
                     tcom = compile_node(arg, level)
@@ -2554,8 +2570,10 @@ def compile_node(node, level, assignable = 0):
                     
         case kind.FUNCDECL:
             state.section_new()
-            state.current_namespace = state.func_namespaces[node.tkname()]
-            state.current_funcname = node.tkname()
+            state.namespace_info_add(
+                state.func_namespaces[node.tkname()],
+                node.tkname()
+            )
             node.tn = node.tn.simple()
             func_info_stack.append(node.tn)
             if node.tkname() in compiled_func_decls:
