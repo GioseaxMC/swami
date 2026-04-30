@@ -60,4 +60,11 @@ macro foreach(da, _iter_n, body) {{
         _iter_n = _op_ptr(_iter_n,+,sizeof(*(da)));
     };
 };}
-
+func ptr void _arr_copy(ptr void dest, ptr void arr, int item_size) {
+    h = arr_header(arr);
+    memcpy(dest, arr, arr_capacity(arr)*item_size+sizeof(Array_header));
+    array_data(dest);
+}
+macro arr_copy(dest, arr) {
+    cast _arr_copy(dest, arr, sizeof(*arr)) as typeof(arr);
+}

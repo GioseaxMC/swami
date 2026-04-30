@@ -347,6 +347,7 @@ def represents_string(s:str) -> bool:
     return s[0] == "\"" and s[-1] == "\""
 
 def llvm_escape(s: str) -> str:
+    s = s[1:-1]
     escape_map = {"n": "\\0A", "t": "\\09", "r": "\\0D", "b": "\\08", "f": "\\0C", "v": "\\0B", "'": "\\27", '"': "\\22", "\\": "\\5C"}
     result = []
     i = 0
@@ -357,12 +358,11 @@ def llvm_escape(s: str) -> str:
                 result.append(escape_map[next_char])
                 i += 1
             else:
-                result.append("\\")
-                result.append(next_char)
+                result.append(f"\\{ord(next_char):02x}")
         else:
-            result.append(s[i])
+            result.append(f"\\{ord(s[i]):02x}")
         i += 1
-    return "".join(result)
+    return "".join(result)+"\\00"
 
 def find_next(line: str) -> int:
     idx = 0
@@ -403,15 +403,7 @@ def lex_tokens(line: str):
             line = ""
 
 def llvm_len(s: str) -> int:
-    length = 0
-    i = 0
-    while i < len(s):
-        if s[i] == "\\" and i + 2 < len(s) and s[i+1] in "0123456789ABCDEFabcdef":
-            i += 3
-        else:
-            i += 1
-        length += 1
-    return length
+    return len(s) // 3
 
 def lex_lines(file_contents, file_path):
     for row, line in enumerate(file_contents.split("\n")):
@@ -1579,7 +1571,7 @@ def parse_primary():
         node.tn.type, node.tn.ptrl = sw_type.CHAR, 1
         if escaped_string not in state.declared_strings:
             state.section_select(state.string_section)
-            state.writeln(f"@str.{len(state.declared_strings)} = global [{llvm_len(escaped_string)-1} x i8] c\"{escaped_string[1:-1]}\\00\"")
+            state.writeln(f"@str.{len(state.declared_strings)} = global [{llvm_len(escaped_string)} x i8] c\"{escaped_string}\" ; {node.tkname()}")
             state.declared_strings.append(escaped_string)
             state.section_return()
         node.int_val = state.declared_strings.index(escaped_string)
@@ -1587,6 +1579,7 @@ def parse_primary():
     elif token[-1] in human_unarys:
         node.kind = kind.UNARY
         node.block = parse_expression(primary_importance)
+        node.tn = node.block.tn
         
     elif token[-1] == "(":
         node = parse_expressions(")")

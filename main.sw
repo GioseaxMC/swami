@@ -1,13 +1,11 @@
 include {
-    "stdlib.sw",
+    "stdlib.sw"
 }
 
-add = func int => (int a, int b) {
-    a+b;
-}
-
-func void main ()
+func int main()
 {
-
-    println(add(6,7));
+    i64 x = 2;
+    for (i=0, i<64, i++, {
+        println(x = x*x);
+    });
 }
