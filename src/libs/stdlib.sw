@@ -78,8 +78,8 @@ macro TODO(__random_shit) {
 
 ptr void nullptr = 0
 ptr void NULL = 0
-bool true = 1
-bool false = 0
+bool True = 1
+bool False = 0
 
 extern ptr void memcpy(ptr void, ptr void, int)
 
@@ -95,7 +95,7 @@ func int min(int a, int b) {
 
 macro _load(ptr) { ptr[0]; }
 
-macro op_ptr(p1, op, p2) { cast cast p1 as int op cast p2 as int as ptr void; }
+macro op_ptr(p1, op, p2) { cast cast p1 as Wint op cast p2 as Wint as ptr void; }
 
 macro addptr(__p__, __offset__) { op_ptr(__p__, +, __offset__); }
 
@@ -147,6 +147,14 @@ ptr char _int_fmt;
 construct {
     if sizeof(int)==8 _int_fmt="%lld" else _int_fmt="%d";
     atexit(__do_at_exit);
+}
+
+func ptr char ptr_char_sum_int(ptr char self, int x) {
+    op_ptr(self,+,x);
+}
+
+func ptr char ptr_char_sub_int(ptr char self, int x) {
+    op_ptr(self,-,x);
 }
 
 macro __fmt(type) {
@@ -207,4 +215,9 @@ macro enum(args) {
     };
 }
 
-
+macro assert(cond, msg) {
+    if !(cond) {
+        println(msg);
+        exit(-1);
+    };
+}

@@ -81,6 +81,7 @@ def verbose(*children, **kwchildren) -> None:
 class sw_type:
     PTR  = iota(1)
     INT  = iota()
+    WORD  = iota()
     I16  = iota()
     I32  = iota()
     I64  = iota()
@@ -93,6 +94,7 @@ class sw_type:
 human_type = [
     "ptr",
     "int",
+    "Wint",
     "i16",
     "i32",
     "i64",
@@ -105,6 +107,7 @@ human_type = [
 
 llvm_type = [
     "ptr",
+    "i32",
     f"i{word_bits}",
     "i16",
     "i32",
@@ -118,6 +121,7 @@ llvm_type = [
 
 sizeof_type = [
     word_bytes,
+    4,
     word_bytes,
     2,
     4,
@@ -129,7 +133,11 @@ sizeof_type = [
     0
 ]
 
-def rlt(tn):
+def rlt(_tn):
+    tn = _tn.copy()
+    if tn.isptr() and tn.type == sw_type.VOID:
+        tn.type = sw_type.CHAR
+
     tpn = ""
     if not DEBUGGING and tn.type < 0:
         compiler_error(node_stack.pop(), "Invalid type, this is a bug")
@@ -152,7 +160,11 @@ def rlt(tn):
     tpn += "*"*tn.outptrl
     return tpn
 
-def hlt(tn):
+def hlt(_tn):
+    tn = _tn.copy()
+    if tn.isptr() and tn.type == sw_type.VOID:
+        tn.type = sw_type.CHAR
+        
     if not DEBUGGING and tn.type < 0:
         compiler_error(node_stack.pop(), "Invalid type, this is a bug")
     tpn = f"{"ptr "*tn.ptrl}{human_type[tn.type]}"
@@ -187,7 +199,7 @@ def open_file(token: tuple|None, filename: str) -> str:
             if not (r:=get(filename)).ok:
                 parser_error(token, f"Failed to retrieve '{filename}'");
             else:
-                content = get(filename).text
+                content = r.text
         else:
             with open(filename, "r") as fp:
                 content = fp.read()
@@ -312,14 +324,17 @@ named_operands = [
 def get_operand_name(operand: str):
     return named_operands[human_operands.index(operand)]
 
-def get_overload_name(node):
+def get_overload_name(node, assignable):
     left_n = hlt(node.children[0].tn).replace(" ", "_");
     center_n = get_operand_name(node.tkname());
     res = left_n+"_"+center_n
     if node.children[1].tn.unknown():
-        return res;
+        res;
     else:
-        return res+"_"+hlt(node.children[1].tn).replace(" ", "_");
+        res += "_"+hlt(node.children[1].tn).replace(" ", "_");
+    if assignable:
+        res += "_ref"
+    return res
 
 scrambles = []
 def get_scramble():
@@ -561,7 +576,7 @@ class Node:
         self.children: list[Node] = []
         self.tn: typenode = typenode()
         self.block = None
-        self.custom_data = None
+        self.custom_data = []
         # self.name = ""
 
     def find_by_name(self, name, node):
@@ -747,6 +762,7 @@ class compiler_state:
         
         self.namespace_stack = [self.global_vars]
         self.funcname_stack = [""]
+        self.func_info_stack: list[typenode] = []
         self.anonymous_structs: dict[Node] = {}
         self.constructor_blocks: list[Node] = []
         
@@ -775,6 +791,9 @@ class compiler_state:
     def current_funcname(self):
         return self.funcname_stack[-1]
     
+    def current_funcinfo(self):
+        return self.func_info_stack[-1]
+
     def section_off(self):
         self.blocked += 1
     
@@ -820,7 +839,6 @@ state = compiler_state()
 
 node_stack: list[Node] = []
 macro_call_stack: list[Node] = []
-func_info_stack: list[typenode] = []
 loop_stack: list[int] = []
 overload_call_stack: list[str] = []
 compiled_func_decls: dict = {}
@@ -1058,8 +1076,8 @@ def parse_type_base(ptrl):
     else:
         parser_error(typename, "Expected typename but got '&t'")
     if rtype == sw_type.VOID:
-        if ptrl:
-            rtype = sw_type.CHAR
+        # if ptrl:
+        #     rtype = sw_type.CHAR
         return rtype, ptrl
     elif rtype == sw_type.PTR:
         return parse_type_base(ptrl+1)
@@ -1343,6 +1361,7 @@ def parse_funcdecl(node):
     parse_indentation += 1
     node.children = parse_named_args(")")
     for arg in node.children:
+        arg.custom_data.append("farg")
         add_usr_var(arg, parse_indentation)
     parse_indentation -= 1
     node.block = parse_block()
@@ -1893,7 +1912,7 @@ def parse_expression(importance): # <- wanted to write priority
 
         op_node.children.append(right_node)
 
-        if (overload:=state.declared_funcs.get(get_overload_name(op_node))):
+        if (overload:=state.declared_funcs.get(get_overload_name(op_node, 0))):
             op_node.tn = overload.tn.simple()
 
         node = op_node
@@ -1979,25 +1998,40 @@ def compile_debug(func):
         return ret
     return wrapper
 
+def compile_action(node, action, level):
+    overload_n = hlt(node.tn)+"_"+action
+    if (func:=state.declared_funcs.get(overload_n)) and overload_n != state.current_funcname():
+        args = Node()
+        args.children.append(node)
+        func = funcref_from_word(func)
+        return compile_call(func, args, level, func.tn.simple().unknown())
+
 def compile_return(block, ret, level):
-    if not len(func_info_stack):
+    if not len(state.func_info_stack):
         compiler_error(block, "Can only return inside functions");
-    funcinfo = func_info_stack[-1]
+    funcinfo = state.func_info_stack[-1]
+    
+    #defer vars:
+    for key, item in state.current_namespace().items():
+        if "farg" not in item.custom_data:
+            item.kind = kind.VARREF
+            compile_action(item, "defer", level)
+
     if not block:
-        if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
+        if funcinfo.unknown():
             state.writeln(f"ret {rlt(funcinfo)}", level)
         else:
             state.writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
     
-    elif not type_cmp(funcinfo, block.tn) and not funcinfo.unknown() and (block.kind != kind.NUM_LIT): # NUM_LIT to adapt int literals to any int type 
+    elif (not type_cmp(funcinfo, block.tn)) and (not funcinfo.unknown()) and block.kind != kind.NUM_LIT: # NUM_LIT to adapt int literals to any int type 
         if block.tn.unknown():
             if funcinfo.isstruct():
                 compiler_error(block, f"No return present in non void function, cannot default to 0")
             else:
-                state.writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
+                state.writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()} ; 34580", level)
         else:
-            state.writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()}", level)
-            compiler_error(block.children[-1], f"defaulting to implicit return 0", 0)
+            state.writeln(f"ret {rlt(funcinfo)} {funcinfo.get_zero()} ; 54389", level)
+            compiler_error(block, f"defaulting to implicit return 0", 0)
     else:
         if funcinfo.unknown():
             state.writeln("ret void", level)
@@ -2049,9 +2083,11 @@ def compile_call(callable_node, args_node, level, assignable=0):
 
         if var_length:
             if idx < len(funcinfo.children)-1 and not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
+                compiler_error(callable_node, "Implementation", 0)
                 compiler_error(arg, f"Vargument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg.tn)}")
         else:
             if not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
+                compiler_error(callable_node, "Implementation", 0)
                 compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg_com.tn)}")
     if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
         state.write(f"call void {to_call}(", level); iota()
@@ -2104,14 +2140,21 @@ def compile_node(node, level, assignable = 0):
             ret = "void"
 
             if node.block:
-                com = compile_node(node.block, level)
-                ret = com.val
-                node.block.tn = com.tn
-                node.block.kind = com.kind
-            # if len(node.children):
-            #     state.writeln(f"ret {rlt(node.children[-1].tn)} {argn}", level)
-            
-            # THIS SHOULD BE IT'S OWN FUNCTION WHEN IMPLEMENTING PROPER IR
+                overload_n = hlt(state.current_funcinfo())+"_copy";
+                if overload_n != state.current_funcname() and (func:=state.declared_funcs.get(overload_n)):
+                    args = Node()
+                    args.children.append(node.block)
+                    func = funcref_from_funcdecl(func)
+                    com = compile_call(func, args, level)
+                    node.block.tn = com.tn;
+                    node.block.kind = com.kind
+                    ret = com.val;
+                else:
+                    com = compile_node(node.block, level)
+                    ret = com.val
+                    node.block.tn = com.tn
+                    node.block.kind = com.kind
+
             compile_return(node.block, ret, level)
        
         case kind.BLOCK:
@@ -2195,8 +2238,7 @@ def compile_node(node, level, assignable = 0):
         case kind.VARDECL:
             if level:
                 state.writeln(f"%{node.tkname()} = alloca {rlt(node.tn)}", level)
-                if not assignable:
-                    state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
+                state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
                 return RegInfo(f"%{node.tkname()}", node.tn+1, node.kind)
             else:
                 if not assignable:
@@ -2266,8 +2308,8 @@ def compile_node(node, level, assignable = 0):
             return com 
 
         case kind.OPERAND:
-            overload_n = get_overload_name(node)
-            if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
+            overload_n = get_overload_name(node, assignable)
+            if overload_n != state.current_funcname() and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
                 
@@ -2523,7 +2565,7 @@ def compile_node(node, level, assignable = 0):
         case kind.REFPTR:
             dest_com = compile_node(node.block, level)
             
-            overload_n = "deref_"+hlt(dest_com.tn).replace(" ","_")
+            overload_n = "deref_"+hlt(dest_com.tn).replace(" ","_")+("_ref" if assignable else "")
             if overload_n != state.current_funcname and (func:=state.declared_funcs.get(overload_n)):
                 func = funcref_from_funcdecl(func)
                 has_self = 0
@@ -2568,7 +2610,7 @@ def compile_node(node, level, assignable = 0):
                 node.tkname()
             )
             node.tn = node.tn.simple()
-            func_info_stack.append(node.tn)
+            state.func_info_stack.append(node.tn)
             if node.tkname() in compiled_func_decls:
                 compiler_error(compiled_func_decls[node.tkname()], "Previously declared here", 0);
                 compiler_error(node, "Cannot redeclare function")
@@ -2601,9 +2643,17 @@ def compile_node(node, level, assignable = 0):
 
             com = compile_node(node.block, nlevel)
             if not com.isterminator():
+                node.block.kind = com.kind
+                overload_n = hlt(node.block.tn)+"_copy"
+                if (func:=state.declared_funcs.get(overload_n)) and overload_n != state.current_funcname():
+                    func = funcref_from_funcdecl(func)
+                    args = Node()
+                    args.children.append(node.block.children[-1])
+                    com = compile_call(func, args, level)
+                    node.block.kind = com.kind
                 compile_return(node.block, com.val, nlevel);
 
-            func_info_stack.pop()
+            state.func_info_stack.pop()
             state.writeln("}\n", level)
 
             state.section_return()

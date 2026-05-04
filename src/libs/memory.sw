@@ -24,7 +24,7 @@ struct TapeCheck {
 Memory memory;
 
 macro mm_init() {{
-    int __memory_tail_marker__;
+    ptr void __memory_tail_marker__;
     memory.stack_tail = &__memory_tail_marker__;
     memory.threshold = 2;
     memory.allocations = new_array(Allocation);
@@ -67,8 +67,9 @@ func TapeCheck mm_check_tape(ptr ptr void start, ptr ptr void end) {
 }
 
 func void mm_garbage_collect() {
+    ptr void __start__;
+    ptr ptr void __memory_start_marker__ = &__start__;
     int freed;
-    ptr ptr void __memory_start_marker__ = &freed;
 
     mm_prepare_tape();
     res = mm_check_tape(__memory_start_marker__, memory.stack_tail);
@@ -88,11 +89,12 @@ func ptr void mm_alloc(int size)
     Allocation all;
     all.size = size;
     all.memory = malloc(size);
+    println(size, " - ", all.memory);
     if !all.memory return NULL;
+    memset(all.memory, 0, size);
 
     arr_push(memory.allocations, all);
     if arr_len(memory.allocations) >= memory.last_len*memory.threshold {
-        println("last: ", memory.last_len, " current: ", arr_len(memory.allocations));
         mm_garbage_collect();
         memory.last_len = arr_len(memory.allocations);
     };

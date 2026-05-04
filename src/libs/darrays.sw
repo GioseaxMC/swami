@@ -4,14 +4,14 @@ extern ptr void malloc(int)
 extern void memcpy(ptr void, ptr void, int)
 
 macro _op_ptr(p1, s, p2) {
-    cast cast p1 as int s cast p2 as int
+    cast cast p1 as Wint s cast p2 as Wint
     as ptr void;
 }
 
 struct Array_header {
+    i64 probe,
     int len,
     int capacity,
-    i64 probe,
 }
 
 struct __caster {
@@ -42,7 +42,7 @@ macro arr_capacity(arr) {{ arr_header(arr).capacity; };}
 macro arr_start(arr) {{ arr; };}
 macro arr_end(arr) { _op_ptr((arr),+,arr_len(arr)*sizeof(*(arr))); }
 macro arr_ensure(arr, new_size) {
-    (arr) = array_data(realloc(arr_header(arr), arr_capacity(arr)*2));
+    (arr) = array_data(realloc(arr_header(arr), new_size));
     arr_capacity(arr) = new_size;
 }
 macro arr_push(arr, item) {
