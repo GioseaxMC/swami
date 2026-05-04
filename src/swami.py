@@ -2698,7 +2698,7 @@ def compile_node(node, level, assignable = 0):
             if DEBUGGING:
                 state.writeln("; '{node.tkname()}' macro declared here", level)
         
-        case kind.WORD:
+        case kind.WORD: # TODO: replace with tokens preprocessing
             # if node.tkname() in state.current_namespace:
             #     node.kind = kind.VARREF
             #     node.tn = state.current_namespace[node.tkname()].tn
