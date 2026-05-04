@@ -80,12 +80,12 @@ def verbose(*children, **kwchildren) -> None:
 @dataclass
 class sw_type:
     PTR  = iota(1)
+    VOID = iota()
     INT  = iota()
     WORD  = iota()
     I16  = iota()
     I32  = iota()
     I64  = iota()
-    VOID = iota()
     CHAR = iota()
     BOOL  = iota()
     # TEMPLATE  = iota()
@@ -93,12 +93,12 @@ class sw_type:
 
 human_type = [
     "ptr",
+    "void",
     "int",
     "Wint",
     "i16",
     "i32",
     "i64",
-    "void",
     "char",
     "bool",
     # "type",
@@ -107,12 +107,12 @@ human_type = [
 
 llvm_type = [
     "ptr",
+    "void",
     "i32",
     f"i{word_bits}",
     "i16",
     "i32",
     "i64",
-    "void",
     "i8",
     "i1",
     # "; template type leaked",
@@ -121,12 +121,12 @@ llvm_type = [
 
 sizeof_type = [
     word_bytes,
+    0,
     4,
     word_bytes,
     2,
     4,
     8,
-    0,
     1,
     1,
     # 0,
@@ -287,9 +287,11 @@ human_operands = [
     "[",
     "(",
     "@",
+    "@@",
     "%",
     "->",
     "=>",
+    ":",
 ]
 
 named_operands = [
@@ -315,10 +317,12 @@ named_operands = [
     "var_args", #
     "index",
     "call",
-    "join",
+    "at",
+    "that",
     "mod",
     "when", #
     "does", #
+    "from",
 ]
 
 def get_operand_name(operand: str):
@@ -570,7 +574,7 @@ def ftn(t, p=0):
 
 class Node:
     def __init__(self):
-        self.token: tuple = None
+        self.token: list = None
         self.string_val: str = None
         self.int_val: int = 0
         self.kind: int = kind.NULL
@@ -753,7 +757,7 @@ class compiler_state:
     def __init__(self):
         self.func_namespaces: dict[str, dict[str, Node]] = {}
         self.global_vars: dict[str, Node] = {}
-        self.macro_tokens: dict[str, list[tuple]] = {}
+        self.macro_tokens: dict[str, list[list]] = {}
         
         self.declared_params: list[str] = []
         self.declared_funcs: dict[str, Node] = {}
@@ -854,7 +858,8 @@ def add_usr_var(node, parse_indentation):
     exists = 0
     if node.tkname() in namespace:
         exists = 1
-    namespace[node.tkname()] = deepcopy(node)
+    else:
+        namespace[node.tkname()] = deepcopy(node)
 
     return exists
 
@@ -889,12 +894,14 @@ class Manager:
         return self.items[self.pointer+1]
 
     def current(self):
+        if len(self.items) < self.pointer:
+            parser_error(self.items[-1], "can't get current")
         return self.items[self.pointer]
     
     def consume(self):
         self.pointer+=1
         if len(self.items) < self.pointer:
-            parser_error(self.items[-1], "Consume can't consume anymore")
+            parser_error(self.items[-1], "consume can't consume anymore")
         return self.items[self.pointer-1]
     
     def assume(self, str):
@@ -928,6 +935,56 @@ source_codents = open_file(None, INFILE_PATH)
 parsed_tokens = get_purified_tokens(source_codents, INFILE_PATH)
 tokens = Manager(parsed_tokens)
 
+def expand_tokens_global(manager: Manager) -> Manager:
+    tokens = None
+    new_tokens = []
+    while manager.more():
+        item = manager.current()
+        if item[-1] == "__type_list__":
+            types = human_type[2:]
+            types.remove("<>")
+            for idx, t in enumerate(types):
+                if idx:
+                    item = item[:-1] + (",",)
+                    new_tokens.append(item)
+                item = item[:-1] + (t,)
+                new_tokens.append(item)
+        elif represents_string(item[-1]) and represents_string(manager.peek()[-1]):
+            item = item[:-1] + (item[-1][:-1]+manager.next()[-1][1:],)
+            new_tokens.append(item)
+            
+        else:
+            # i must always be increased by the amount of tokens added to the list
+            new_tokens.append(item)
+        manager.consume()
+    return Manager(new_tokens)
+
+def expand_tokens_for_macro(manager: Manager) -> Manager:
+    new_tokens = []
+    while manager.more():
+        item = manager.current()
+        if item[-1] == "__scramble__":
+            item = item[:-1] + (get_scramble(),)
+            new_tokens.append(item)
+
+        elif item[-1] == "__included__":
+            manager.consume()
+            manager.expect("(")
+            file = manager.consume()[-1][1:-1]
+            if file in included_files:
+                item = item[:-1] + ("1",)
+            else:
+                item = item[:-1] + ("0",)
+            manager.expect(")")
+            manager.goback()
+            new_tokens.append(item)
+
+        else:
+            # i must always be increased by the amount of tokens added to the list
+            new_tokens.append(item)
+        manager.consume()
+    return expand_tokens_global(Manager(new_tokens))
+
 def get_importance(token):
     tkname = token[-1]
     # lower items means higher importance
@@ -946,8 +1003,6 @@ def get_importance(token):
         (">=",),
         ("==",),
         ("!=",),
-        
-
 
         ("+", "-"),
         ("*", "/"),
@@ -1054,7 +1109,6 @@ def compile_string_add(string: str):
         state.blocked = 0
         state.section_select(state.string_section)
         state.writeln(f"@str.{len(state.declared_strings)} = global [{llvm_len(escaped)} x i8] c\"{escaped}\" ; {string}")
-        print(state.declared_strings)
         state.declared_strings.append(escaped)
         state.section_return()
         state.blocked = oblock
@@ -1064,8 +1118,9 @@ def compile_string_add(string: str):
 
 
 def parse():
-    global parse_indentation
+    global parse_indentation, tokens
     parse_indentation = -1
+    tokens = expand_tokens_global(tokens)
     while tokens.more():
         if (node:=parse_expression(0)).kind != kind.NULL:
             nodes.append(node)
@@ -1085,7 +1140,8 @@ def parse_incdec():
 def parse_type_base(ptrl):
     typename = tokens.consume()
     if typename[-1] == "typeof":
-        tn = parse_primary().tn
+        tn = parse_expression().tn
+        print(tn)
         rtype, ptrl = tn.type, tn.ptrl;
     elif typename[-1] == "struct":
         node = Node()
@@ -1107,9 +1163,11 @@ def parse_type_base(ptrl):
 def parse_type():
     tn = typenode()
     tn.token = tokens.current()
-    #if tn.token[-1] == "typeof":
-    #    tokens.consume()
-    #    return parse_primary().tn.copy()
+    if tn.token[-1] == "typeof":
+        tokens.consume()
+        tn = parse_primary().tn.copy()
+        print(tn)
+        return tn
     tn.type, tn.ptrl = parse_type_base(0)
     tn.outptrl = 0
     if tokens.current()[-1] == "(":
@@ -1319,7 +1377,7 @@ def parse_macro_call():
         else:
             idx+=1
 
-    tokens = Manager(current_macro_tks)
+    tokens = expand_tokens_for_macro(Manager(current_macro_tks))
 
     old_pi = parse_indentation
     parse_indentation = -1
@@ -1477,6 +1535,12 @@ def parse_vardecl(node):
     exists = add_usr_var(node, parse_indentation)
     if exists:
         node.kind = kind.VARREF
+        decl = state.current_namespace().get(node.tkname())
+        print(node.tn, decl.tn)
+        if not exact_type_cmp(node.tn, decl.tn):
+            parser_error(decl.token, "Previously declared here", 1)
+            parser_error(node.token, "Cannot treat as reference if the type is different")
+
     if 0 and tokens.current()[-1] == "=" and not parse_indentation:
         if not exists:
             tokens.consume()
@@ -1537,7 +1601,7 @@ def parse_inclusion(node) -> Node:
             
             parsed_tokens = get_purified_tokens(contents, filepath)
             
-            tokens = Manager(parsed_tokens)
+            tokens = expand_tokens_global(Manager(parsed_tokens))
             og_pi = parse_indentation
             parse_indentation = 0
 
@@ -1580,7 +1644,7 @@ def parse_generic():
             tokens.expect(",")
     tokens.expect(")")
 
-    if not node.tn:
+    if not node.tn or node.tn.unknown():
         node.tn = default_node.tn
     if default_node:
         node.children.append(default_node)
@@ -1905,15 +1969,17 @@ def parse_expression(importance): # <- wanted to write priority
                     # if not node.tn.isstruct():
                     #     compiler_error(node, f"Can only extract field from structs, '{hlt(node.tn)}' is not a struct");
 
-                    struct_node = state.declared_structs[hlt(node.tn.base())]
+                    struct_node = state.declared_structs.get(hlt(node.tn.base()))
+                    if not struct_node:
+                        parser_error(node.tn.token, "type origin:", 0)
+                        compiler_error(node, f"Cannot extract from {node.tn.base()}");
                     ret = struct_node.find_by_name(right_node.tkname(), right_node)
                     if ret[1]:
                         field_id = ret[0]
                         field_node = struct_node.children[field_id]
                         op_node.tn = field_node.tn
                     else:
-                        func = state.declared_funcs.get("inspect_"+hlt(node.tn), None)
-                        if func:
+                        if func := state.declared_funcs.get("inspect_"+hlt(node.tn)):
                             op_node.tn = func.tn.simple()
                         else:
                             op_node.tn = ftn(sw_type.VOID)

@@ -7,6 +7,7 @@ extern ptr void realloc(ptr void, int)
 extern void free(ptr void)
 extern void exit(int)
 extern ptr char memset(ptr char, int, int)
+extern int memcmp(ptr void, ptr void, int)
 
 extern int strlen(ptr char)
 extern void strcpy(ptr char, ptr char)
@@ -157,17 +158,21 @@ func ptr char ptr_char_sub_int(ptr char self, int x) {
     op_ptr(self,-,x);
 }
 
+struct Formatter {};
+Formatter formatter;
+
 macro __fmt(type) {
     generic(type,
-        int: _int_fmt,
+        Wint: _int_fmt,
         i16: "%hd",
         i32: "%d",
+        int: "%d",
         i64: "%lld",
         char: "%c",
         bool: "%d",
         ptr char: "%s",
         ptr void: "%p",
-        default: "%%?"
+        default: formatter->(type),
     );
 }
 
@@ -175,9 +180,10 @@ struct Printer {};
 Printer printer;
 
 macro __print_once(x) {
-    generic(x,
-        bool: if x printf("true") else printf("false"),
+    generic((x),
+        bool: if (x) printf("true") else printf("false"),
         int: printf(__fmt(x), x),
+        Wint: printf(__fmt(x), x),
         i16: printf(__fmt(x), x),
         i32: printf(__fmt(x), x),
         i64: printf(__fmt(x), x),
@@ -217,7 +223,7 @@ macro enum(args) {
 
 macro assert(cond, msg) {
     if !(cond) {
-        println(msg);
+        println(__file__,":",__line__,":",__row__,": ",msg);
         exit(-1);
     };
 }

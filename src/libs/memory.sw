@@ -36,10 +36,14 @@ func void mm_prepare_tape() {
     });
 }
 
+func bool mm__fits(ptr void p, ptr Allocation all) {
+    return _op_ptr(p,>=,all.memory) && _op_ptr(p,<,_op_ptr(all.memory,+,all.size));
+}
+
 func ptr Allocation mm__get_allocation_from_ptr(ptr ptr void rsp) 
 {
     foreach(memory.allocations, allocation, {
-        if op_ptr(allocation.memory,==,*rsp) return allocation;
+        if mm__fits(*rsp, allocation) return allocation;
     });
     return NULL;
 }
@@ -89,7 +93,6 @@ func ptr void mm_alloc(int size)
     Allocation all;
     all.size = size;
     all.memory = malloc(size);
-    println(size, " - ", all.memory);
     if !all.memory return NULL;
     memset(all.memory, 0, size);
 
@@ -99,6 +102,14 @@ func ptr void mm_alloc(int size)
         memory.last_len = arr_len(memory.allocations);
     };
     return all.memory;
+}
+
+func ptr void mm_realloc(ptr void p, int s) {
+    new = mm_alloc(s);
+    found = mm__get_allocation_from_ptr(p);
+    assert(found, "cannot realloc unknown pointer");
+    memcpy(new, found.memory, found.size);
+    return new;
 }
 
 func void mm_deinit()
