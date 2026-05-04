@@ -347,7 +347,8 @@ def represents_string(s:str) -> bool:
     return s[0] == "\"" and s[-1] == "\""
 
 def llvm_escape(s: str) -> str:
-    s = s[1:-1]
+    if represents_string(s):
+        s = s[1:-1]
     escape_map = {"n": "\\0A", "t": "\\09", "r": "\\0D", "b": "\\08", "f": "\\0C", "v": "\\0B", "'": "\\27", '"': "\\22", "\\": "\\5C"}
     result = []
     i = 0
@@ -732,6 +733,7 @@ class RegInfo:
     def isliteral(self):
         return self.kind in (kind.NUM_LIT, kind.STR_LIT)
 
+compiler_snapshots = []
 class compiler_state:
     def __init__(self):
         self.func_namespaces: dict[str, dict[str, Node]] = {}
@@ -760,7 +762,7 @@ class compiler_state:
         self.blocked = 0
         
         self.section_return_stack = []
-    
+        
     def namespace_info_add(self, namespace, name):
         self.namespace_stack.append(namespace)
         self.funcname_stack.append(name)
@@ -1024,6 +1026,24 @@ def exact_type_cmp(type1, type2):
         if not exact_type_cmp(c1, c2):
             return 0;
     return (type1.type, type1.ptrl, type1.count) == (type2.type, type2.ptrl, type2.count)
+
+def compile_string_add(string: str):
+    global state
+    escaped = llvm_escape(string)
+    slen = llvm_len(escaped)
+    if escaped not in state.declared_strings:
+        oblock = state.blocked
+        state.blocked = 0
+        state.section_select(state.string_section)
+        state.writeln(f"@str.{len(state.declared_strings)} = global [{llvm_len(escaped)} x i8] c\"{escaped}\" ; {string}")
+        print(state.declared_strings)
+        state.declared_strings.append(escaped)
+        state.section_return()
+        state.blocked = oblock
+    
+    return state.declared_strings.index(escaped)
+
+
 
 def parse():
     global parse_indentation
@@ -1578,15 +1598,9 @@ def parse_primary():
 
     elif represents_string(token[-1]):
         node.kind = kind.STR_LIT
-        escaped_string = llvm_escape(node.tkname())
         node.tn.type, node.tn.ptrl = sw_type.CHAR, 1
-        if escaped_string not in state.declared_strings:
-            state.section_select(state.string_section)
-            state.writeln(f"@str.{len(state.declared_strings)} = global [{llvm_len(escaped_string)} x i8] c\"{escaped_string}\" ; {node.tkname()}")
-            state.declared_strings.append(escaped_string)
-            state.section_return()
-        node.int_val = state.declared_strings.index(escaped_string)
-        
+        node.int_val = compile_string_add(node.tkname())
+
     elif token[-1] in human_unarys:
         node.kind = kind.UNARY
         node.block = parse_expression(primary_importance)
@@ -2009,7 +2023,6 @@ def compile_return(block, ret, level):
 # src_node is a node with the children being the passed args
 # i need a method that creates this from a single node containing the children
 # and the tkname being in the node...
-    
 
 def compile_call(callable_node, args_node, level, assignable=0):
     nlevel = level+1
@@ -2275,11 +2288,7 @@ def compile_node(node, level, assignable = 0):
                     if nd.kind == kind.STRUCTFIELD:
                         nd.kind = kind.STR_LIT
                         nd.tn = ftn(sw_type.CHAR, 1)
-                        state.section_select(state.string_section)
-                        state.writeln(f"@str.{len(state.declared_strings)} = global [{len(nd.tkname())+1} x i8] c\"{nd.tkname()}\\00\"")
-                        nd.int_val = len(state.declared_strings)
-                        state.declared_strings.append(nd.tkname())
-                        state.section_return()
+                        nd.int_val = compile_string_add(nd.tkname())
 
                 if func.tn.simple().unknown():
                     has_self = 1
@@ -2694,7 +2703,22 @@ def compile_node(node, level, assignable = 0):
             #     node.kind = kind.VARREF
             #     node.tn = state.current_namespace[node.tkname()].tn
             #     return compile_node(node, level, assignable)
-            compiler_error(node, "Unexpected unqualified word '&t' cannot be compiled")
+            if len(macro_call_stack):
+                token = macro_call_stack[0].token
+            else:
+                token = node.token
+            if node.tkname() == "__line__":
+                return RegInfo(f"{token[1]+1}", ftn(sw_type.INT), kind.NUM_LIT)
+            elif node.tkname() == "__row__":
+                return RegInfo(f"{token[2]+1}", ftn(sw_type.INT), kind.NUM_LIT)
+            elif node.tkname() == "__file__":
+                node.string_val = token[0]
+                node.kind = kind.STR_LIT
+                node.tn = ftn(sw_type.CHAR, 1)
+                node.int_val = compile_string_add(token[0])
+                return RegInfo(f"@str.{node.int_val}", node.tn, node.kind)
+            else:
+                compiler_error(node, "Unexpected unqualified word '&t' cannot be compiled")
 
         # case kind.NULL: # null nodes should not make it to the compilation stage
         #     ...
