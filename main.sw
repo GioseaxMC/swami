@@ -8,7 +8,9 @@ func int main ()
 {
     strings = new_array_with_gc(Str);
     
-    Str a = str(67);
+    rule ss 67;
+
+    Str a = str(ss);
 
     arr_push(strings, a);
     arr_push(strings, a);
@@ -16,7 +18,7 @@ func int main ()
     arr_push(strings, a);  
     
     Str c = str_join(str("."), strings);
-
+    
     println(c);
 
     sigmas = str(str_split(c, str(".")));

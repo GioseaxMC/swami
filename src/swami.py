@@ -765,6 +765,7 @@ class compiler_state:
         self.declared_lists: list[str] = []
         self.declared_structs: dict = {}
         self.declared_macros: dict[str, Node] = {}
+        self.declared_rules: dict[str, list[tuple]] = {}
         
         self.namespace_stack = [self.global_vars]
         self.funcname_stack = [""]
@@ -840,6 +841,9 @@ class compiler_state:
         if self.blocked:
             return
         self.current_section = self.section_return_stack.pop()
+    
+    def section_ordinal_select(self, idx):
+        self.section_select(self.sections[idx])
 
 state = compiler_state()
 
@@ -935,6 +939,20 @@ source_codents = open_file(None, INFILE_PATH)
 parsed_tokens = get_purified_tokens(source_codents, INFILE_PATH)
 tokens = Manager(parsed_tokens)
 
+def parse_rule(manager: Manager) -> None:
+    p_level = 0
+    manager.expect("rule"); # RULE  
+    rule_name = manager.consume()[-1]
+    state.declared_rules[rule_name] = state.declared_rules.get(rule_name, list())
+    print(rule_name)
+    while (t:=manager.consume()[-1]) != ";" or p_level:
+        if t in ("(","[","{"):
+            p_level += 1
+        elif t in (")", "]", "}"):
+            p_level -= 1
+        print(t)
+        state.declared_rules[rule_name].append(t)
+
 def expand_tokens_global(manager: Manager) -> Manager:
     tokens = None
     new_tokens = []
@@ -952,9 +970,15 @@ def expand_tokens_global(manager: Manager) -> Manager:
         elif represents_string(item[-1]) and represents_string(manager.peek()[-1]):
             item = item[:-1] + (item[-1][:-1]+manager.next()[-1][1:],)
             new_tokens.append(item)
-            
+        
+        elif item[-1] == "rule":
+            print("rule")
+            parse_rule(manager)
+        elif item[-1] in state.declared_rules:
+            for tk in state.declared_rules[item[-1]]:
+                new_tokens.append(tk)
         else:
-            # i must always be increased by the amount of tokens added to the list
+            # 'i' must always be increased by the amount of tokens added to the list
             new_tokens.append(item)
         manager.consume()
     return Manager(new_tokens)
@@ -2078,14 +2102,6 @@ def compile_debug(func):
         return ret
     return wrapper
 
-def compile_action(node, action, level):
-    overload_n = hlt(node.tn)+"_"+action
-    if (func:=state.declared_funcs.get(overload_n)) and overload_n != state.current_funcname():
-        args = Node()
-        args.children.append(node)
-        func = funcref_from_word(func)
-        return compile_call(func, args, level, func.tn.simple().unknown())
-
 def compile_return(block, ret, level):
     if not len(state.func_info_stack):
         compiler_error(block, "Can only return inside functions");
@@ -2179,7 +2195,19 @@ def compile_call(callable_node, args_node, level, assignable=0):
     state.writeln(")", 0)
     
     return RegInfo(f"%{iota(-1)}", ret_tn, kind.FUNCCALL)
-                
+     
+def try_call_function(node, function, level):
+    overload_n = function;
+    if (func:=state.declared_funcs.get(overload_n)) and overload_n != state.current_funcname():
+        args = Node()
+        args.children.append(node)
+        func = funcref_from_word(func)
+        return compile_call(func, args, level, func.tn.simple().unknown())
+
+def compile_action(node, action, level):
+    overload_n = hlt(node.tn)+"_"+action
+    return try_call_function(node, overload_n, level)
+           
 
 def both_numlit(node1, node2):
     return node1.kind == kind.NUM_LIT and node2.kind == kind.NUM_LIT
@@ -2316,13 +2344,16 @@ def compile_node(node, level, assignable = 0):
 
         case kind.VARDECL:
             if level:
+                state.section_ordinal_select(-2)
                 state.writeln(f"%{node.tkname()} = alloca {rlt(node.tn)}", level)
                 state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
-                return RegInfo(f"%{node.tkname()}", node.tn+1, node.kind)
+                state.section_return()
+                ret = RegInfo(f"%{node.tkname()}", node.tn+1, node.kind)
             else:
                 if not assignable:
                     state.writeln(f"@{node.tkname()} = global {rlt(node.tn)} zeroinitializer ; ptr %{node.tkname()}", level)
-                return RegInfo(f"@{node.tkname()}", node.tn+1, node.kind)
+                ret = RegInfo(f"@{node.tkname()}", node.tn+1, node.kind)
+            return ret
 
         case kind.VARREF:
             com = RegInfo(node.tkname(), node.tn, node.kind)
@@ -2712,6 +2743,8 @@ def compile_node(node, level, assignable = 0):
                     state.writeln(f"store {rlt(arg.tn)} %{iota()}, ptr %{arg.tkname()}", nlevel)
             iota()
             
+            state.section_new()
+
             if node.tkname() == "main":
                 for block in state.constructor_blocks:
                     compile_node(block, nlevel)
@@ -2731,6 +2764,7 @@ def compile_node(node, level, assignable = 0):
             state.func_info_stack.pop()
             state.writeln("}\n", level)
 
+            state.section_return()
             state.section_return()
             iota_return()
             return RegInfo("@"+node.tkname(), funcref_from_funcdecl(node).tn, node.kind)
