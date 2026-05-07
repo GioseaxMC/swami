@@ -29,6 +29,10 @@ func int pow(int base, int power) {
     return base;
 }
 
+rule or ||;
+rule and &&;
+rule elif else if;
+
 func bool isspace(char c) { return (c==9 || c==10 || c==11 || c==12 || c==13 || c==32); }
 
 func bool isalnum(char c) {

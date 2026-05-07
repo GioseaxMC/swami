@@ -944,13 +944,12 @@ def parse_rule(manager: Manager) -> None:
     manager.expect("rule"); # RULE  
     rule_name = manager.consume()[-1]
     state.declared_rules[rule_name] = state.declared_rules.get(rule_name, list())
-    print(rule_name)
-    while (t:=manager.consume()[-1]) != ";" or p_level:
+    while (t:=manager.current())[-1] != ";" or p_level:
+        manager.consume()
         if t in ("(","[","{"):
             p_level += 1
         elif t in (")", "]", "}"):
             p_level -= 1
-        print(t)
         state.declared_rules[rule_name].append(t)
 
 def expand_tokens_global(manager: Manager) -> Manager:
@@ -972,10 +971,10 @@ def expand_tokens_global(manager: Manager) -> Manager:
             new_tokens.append(item)
         
         elif item[-1] == "rule":
-            print("rule")
             parse_rule(manager)
-        elif item[-1] in state.declared_rules:
-            for tk in state.declared_rules[item[-1]]:
+
+        elif tks := state.declared_rules.get(item[-1]):
+            for tk in tks:
                 new_tokens.append(tk)
         else:
             # 'i' must always be increased by the amount of tokens added to the list
@@ -1634,7 +1633,7 @@ def parse_inclusion(node) -> Node:
                     node.children.append(pnode)
 
             parse_indentation = og_pi
-            tokens = og_tokens
+            tokens = expand_tokens_global(og_tokens)
         if tokens.current()[-1] != closer:
             tokens.expect(",")
         
@@ -2344,10 +2343,10 @@ def compile_node(node, level, assignable = 0):
 
         case kind.VARDECL:
             if level:
-                state.section_ordinal_select(-2)
+                # state.section_ordinal_select(-2)
                 state.writeln(f"%{node.tkname()} = alloca {rlt(node.tn)}", level)
                 state.writeln(f"store {rlt(node.tn)} zeroinitializer, ptr %{node.tkname()}", level)
-                state.section_return()
+                # state.section_return()
                 ret = RegInfo(f"%{node.tkname()}", node.tn+1, node.kind)
             else:
                 if not assignable:
@@ -2743,7 +2742,7 @@ def compile_node(node, level, assignable = 0):
                     state.writeln(f"store {rlt(arg.tn)} %{iota()}, ptr %{arg.tkname()}", nlevel)
             iota()
             
-            state.section_new()
+            # state.section_new()
 
             if node.tkname() == "main":
                 for block in state.constructor_blocks:
@@ -2765,7 +2764,7 @@ def compile_node(node, level, assignable = 0):
             state.writeln("}\n", level)
 
             state.section_return()
-            state.section_return()
+            # state.section_return()
             iota_return()
             return RegInfo("@"+node.tkname(), funcref_from_funcdecl(node).tn, node.kind)
         
