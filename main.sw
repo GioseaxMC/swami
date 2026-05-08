@@ -2,9 +2,22 @@ include {
     "stdlib.sw",
 }
 
+struct Test {
+    int number,
+}
+
+func Test Test_new(ptr Test self) {
+    assert(!self, "cannot initialize from created type");
+
+    Test new;
+    new;
+}
+
 func int main ()
 {
-    if 0 and 1 { println("Hello World"); }
-    elif 1 println("Sigma boy")
-    else println("Nun");
+    t = Test.new();
+    
+    t = t.new();
+    println(t.number);
 }
+

@@ -1164,7 +1164,6 @@ def parse_type_base(ptrl):
     typename = tokens.consume()
     if typename[-1] == "typeof":
         tn = parse_expression().tn
-        print(tn)
         rtype, ptrl = tn.type, tn.ptrl;
     elif typename[-1] == "struct":
         node = Node()
@@ -1189,7 +1188,6 @@ def parse_type():
     if tn.token[-1] == "typeof":
         tokens.consume()
         tn = parse_primary().tn.copy()
-        print(tn)
         return tn
     tn.type, tn.ptrl = parse_type_base(0)
     tn.outptrl = 0
@@ -1559,7 +1557,6 @@ def parse_vardecl(node):
     if exists:
         node.kind = kind.VARREF
         decl = state.current_namespace().get(node.tkname())
-        print(node.tn, decl.tn)
         if not exact_type_cmp(node.tn, decl.tn):
             parser_error(decl.token, "Previously declared here", 1)
             parser_error(node.token, "Cannot treat as reference if the type is different")
@@ -1685,6 +1682,12 @@ def parse_expressions(ender):
             tokens.expect(",");
     node.tn = node.children[-1].tn.copy()
     tokens.expect(ender)
+    return node
+
+def parse_word():
+    node = Node()
+    node.token = tokens.consume()
+    node.kind = kind.WORD
     return node
 
 def parse_primary():
@@ -1940,7 +1943,8 @@ def parse_primary():
         parse_funcref(node)
 
     elif tokenizable(token[-1]):
-        node.kind = kind.WORD
+        tokens.goback()
+        node = parse_word()
         # if parse_indentation:
         # else:
         #     parser_error(token, "Unknown instruction '&t'")
@@ -1982,8 +1986,7 @@ def parse_expression(importance): # <- wanted to write priority
                     node.kind = kind.VARDECL
                     add_usr_var(node, parse_indentation)
             case ".":
-                right_node = parse_primary() #(get_importance(op_token))
-
+                right_node = parse_word() #(get_importance(op_token))
                 if right_node.kind in (kind.WORD, kind.VARREF, kind.FUNCREF):
                     right_node.kind = kind.STRUCTFIELD
 
@@ -1997,25 +2000,30 @@ def parse_expression(importance): # <- wanted to write priority
                         parser_error(node.tn.token, "type origin:", 0)
                         compiler_error(node, f"Cannot extract from {node.tn.base()}");
                     ret = struct_node.find_by_name(right_node.tkname(), right_node)
+                    over = hlt(node.tn)+"_"+right_node.tkname()
                     if ret[1]:
                         field_id = ret[0]
                         field_node = struct_node.children[field_id]
                         op_node.tn = field_node.tn
+                    elif (func:=state.declared_funcs.get(hlt(node.tn)+"_"+right_node.tkname())):
+                        op_node = funcref_from_funcdecl(func)
+                        op_node.custom_data.append(node)
                     else:
                         if func := state.declared_funcs.get("inspect_"+hlt(node.tn)):
                             op_node.tn = func.tn.simple()
                         else:
                             op_node.tn = ftn(sw_type.VOID)
                 else:
+
                     ...
-                    # parser_error(right_node.token, "Expected a struct field");
+                    #parser_error(right_node.token, "Expected a struct field");
 
             case _:
                 right_node = parse_expression(get_importance(op_token))
 
         op_node.children.append(right_node)
 
-        if (overload:=state.declared_funcs.get(get_overload_name(op_node, 0))):
+        if op_node.kind == kind.OPERAND and (overload:=state.declared_funcs.get(get_overload_name(op_node, 0))):
             op_node.tn = overload.tn.simple()
 
         node = op_node
@@ -2165,7 +2173,7 @@ def compile_call(callable_node, args_node, level, assignable=0):
     if len(funcinfo.children):
         if funcinfo.children[-1].type == sw_type.ANY:
             var_length = 1
-        
+    
     if not var_length and len(funcinfo.children) != len(args_node.children):
         compiler_error(funcinfo, "refer to implementation:", 0)
         compiler_error(callable_node, f"The number of arguments passed to '&t' must be {len(funcinfo.children)}, not {len(args_node.children)}:\n");
@@ -2309,7 +2317,7 @@ def compile_node(node, level, assignable = 0):
             return RegInfo(f"@list.{node.int_val}", node.tn, node.kind)
 
         case kind.TYPE:
-            return RegInfo(f"zeroinitializer", node.tn, node.kind)
+            return RegInfo(f"zeroinitializer", node.tn+assignable, node.kind)
 
         case kind.RESERVE:
             var = iota()
@@ -2523,10 +2531,14 @@ def compile_node(node, level, assignable = 0):
                 return com
 
             elif node.tkname() == "(": # FUNCALL, funcall, FUNCCALL, funccall
+                has_self = 0
                 if dest_node.kind == kind.WORD: # turns word into a function: word -> function
                     dest_node = funcref_from_word(dest_node)
+                for cd in dest_node.custom_data:
+                    src_node.children.insert(0, cd)
+                    has_self = 1
                 if dest_node.tn.is_callable():
-                    return compile_call(dest_node, src_node, level, assignable)
+                    return compile_call(dest_node, src_node, level, assignable or has_self)
                 else:
                     compiler_error(dest_node, "Cannot be called, as the type is not a function (or a pointer to it)")
             else:

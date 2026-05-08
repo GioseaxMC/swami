@@ -47,7 +47,7 @@ func int main(int argc, ptr ptr char argv) {
   for(i=1, i<argc, i++, {
     
     contents = read_file(argv[i]).contents;
-    printf("%s\n", contents);
+    println(contents);
 
   });
   
@@ -62,7 +62,7 @@ $ cat main.sw
 include { "stdlib.sw" }
 
 func int main() {
-    printf("Hello World!\n");
+    println("Hello World!");
 }
 
 ```
