@@ -233,7 +233,7 @@ class WindowPrint:
 
 def parser_error(token, prompt, errno = -1):
     if len(macro_call_stack) and errno:
-        call = macro_call_stack.pop()
+        call = macro_call_stack.pop(0)
         parser_error(call.token, "From macro call", 1);
     global error_sum; error_sum += abs(errno)
     COLOR = f.MAGENTA
@@ -625,7 +625,7 @@ if argc <= 1:
     # debug("  - <optional argument> defaults to main")
     # debug("")
 
-OUTFILE_PATH = args.o.removesuffix(".ll")+".ll"
+OUTFILE_PATH = args.o.removesuffix(".ll").removesuffix(".exe")+".ll"
 INFILE_PATH = args.sourcecode.removesuffix(".sw")+".sw"
 
 @dataclass
@@ -1122,6 +1122,16 @@ def exact_type_cmp(type1, type2):
         if not exact_type_cmp(c1, c2):
             return 0;
     return (type1.type, type1.ptrl, type1.count) == (type2.type, type2.ptrl, type2.count)
+
+def type_base_cmp(type1, type2):
+    return exact_type_cmp(type1.base(), type2.base())
+
+def type_ptrl_mismatch(type1, type2):
+    return (not (type1-1).unknown() and not(type2-1).unknown()) and \
+        (not exact_type_cmp(type1, type2)) and \
+        type_base_cmp(type1, type2)
+        
+    
 
 def compile_string_add(string: str):
     global state
@@ -2191,6 +2201,9 @@ def compile_call(callable_node, args_node, level, assignable=0):
             if not type_cmp(arg_com.tn, funcinfo.children[idx]) and not arg_com.tn.type == sw_type.INT:
                 compiler_error(callable_node, "Implementation", 0)
                 compiler_error(arg, f"Argument types don't match with function declaration: {hlt(funcinfo.children[idx])} != {hlt(arg_com.tn)}")
+            elif type_ptrl_mismatch(arg_com.tn, funcinfo.children[idx]):
+                compiler_error(callable_node, "Implementation", 0)
+                compiler_error(arg, f"Argument type matches but the pointer level is off:\n{arg_com.tn} != {funcinfo.children[idx]}");
     if (funcinfo.type, funcinfo.ptrl) == (sw_type.VOID, 0):
         state.write(f"call void {to_call}(", level); iota()
     else:
@@ -2919,7 +2932,7 @@ out.write(content)
 out.close()
 
 args.b = args.b + " " + " ".join(state.declared_params)
-EXECUTABLE_FILE = OUTFILE_PATH.removesuffix('.ll') + (".exe" if os_name == "windows" else "")
+EXECUTABLE_FILE = OUTFILE_PATH.removesuffix('.ll').removesuffix(".exe")
 compiler_call = f"{args.backend} {OUTFILE_PATH} -o {EXECUTABLE_FILE} -Wno-override-module {args.b}"
 
 verbose("[INFO]: compiler call:", compiler_call)
@@ -2940,7 +2953,7 @@ if args.run:
     exit_code = os.system(run_call)
     verbose("[INFO]: removing temporary script executable")
     if os_name == "windows":
-            os.system(f"del {EXECUTABLE_FILE}")
+        os.system(f"del {EXECUTABLE_FILE}")
     else:
         os.system(f"rm {EXECUTABLE_FILE}")
     # exit(exit_code*67)

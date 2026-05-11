@@ -149,10 +149,11 @@ func void __do_at_exit() {
 }
 
 
-ptr char _int_fmt;
+ptr char _Wint_fmt;
 construct {
-    if sizeof(int)==8 _int_fmt="%lld" else _int_fmt="%d";
+    if sizeof(Wint)==8 _Wint_fmt="%lld" else _Wint_fmt="%d";
     atexit(__do_at_exit);
+    __at_exit_funcs = new_array(ptr void);
 }
 
 func ptr char ptr_char_sum_int(ptr char self, int x) {
@@ -168,7 +169,7 @@ Formatter formatter;
 
 macro __fmt(type) {
     generic(type,
-        Wint: _int_fmt,
+        Wint: _Wint_fmt,
         i16: "%hd",
         i32: "%d",
         int: "%d",

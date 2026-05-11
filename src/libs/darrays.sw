@@ -3,6 +3,8 @@ extern ptr void malloc(int)
 
 extern void memcpy(ptr void, ptr void, int)
 
+extern int printf(ptr char, <>)
+
 macro _op_ptr(p1, s, p2) {
     cast cast p1 as Wint s cast p2 as Wint
     as ptr void;
@@ -61,11 +63,12 @@ macro arr_ensure(arr, new_size) {
     arr_capacity(arr) = new_size;
 }
 macro arr_push(arr, item) {
-    if (!(arr)) { (arr) = allocate_inited_array(sizeof(*arr), ARRAY_INIT_CAPACITY, malloc); };
+    if (!arr) exit(printf("%s:%i: Expected initialized array for pushing\n", __file__, __line__));
     (arr)[arr_len(arr)++] = (item);
     if (arr_len(arr) >= arr_capacity(arr)) arr_ensure((arr), arr_capacity(arr)*2);
 }
 macro arr_unordered_remove(arr, index) { (arr)[index] = (arr)[--arr_len(arr)]; }
+macro arr_pop(arr) { arr_unordered_remove((arr), arr_len(arr)); }
 macro arr_free(arr) { if is_array(arr) free(arr_header((arr))); }
 macro arr_exists(arr, idx) { idx<arr_len(arr); }
 macro foreach(da, _iter_n, body) {{
@@ -75,13 +78,18 @@ macro foreach(da, _iter_n, body) {{
         _iter_n = _op_ptr(_iter_n,+,sizeof(*(da)));
     };
 };}
-func ptr void _arr_copy(ptr void dest, ptr void arr, int item_size) {
-    h = arr_header(arr);
-    memcpy(dest, arr, arr_capacity(arr)*item_size+sizeof(Array_header));
+
+macro arr_alloc(arr) { cast _arr_alloc(arr) as ptr void (int) ptr; }
+# dest is just a pointer, meaning the returned pointer for dest wont match as it will be offset by header size
+func ptr void _arr_copy(ptr void arr, int item_size) {
+    if !is_array(arr) return NULL;
+    dest = arr_alloc(arr)(arr_capacity(arr)*item_size+sizeof(Array_header));
+    memcpy(dest, arr_header(arr), arr_capacity(arr)*item_size+sizeof(Array_header));
+
     array_data(dest);
 }
-macro arr_copy(dest, arr) {
-    cast _arr_copy(dest, arr, sizeof(*arr)) as typeof(arr);
+macro arr_copy(arr) {
+    cast _arr_copy(arr, sizeof(*arr)) as typeof(arr);
 }
 func ptr void _arr_alloc(ptr void arr) {
     if arr_header(arr).alloc
@@ -89,7 +97,6 @@ func ptr void _arr_alloc(ptr void arr) {
     else
         return malloc;
 }
-macro arr_alloc(arr) { cast _arr_alloc(arr) as ptr void (int) ptr; }
 func ptr void _arr_realloc(ptr void arr) {
     if arr_header(arr).realloc
         return arr_header(arr).realloc 

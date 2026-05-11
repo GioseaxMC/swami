@@ -1,23 +1,13 @@
 include {
     "stdlib.sw",
+    "paths.sw"
 }
 
-struct Test {
-    int number,
-}
-
-func Test Test_new(ptr Test self) {
-    assert(!self, "cannot initialize from created type");
-
-    Test new;
-    new;
-}
-
-func int main ()
-{
-    t = Test.new();
+func int main() {
+    Path p = "../this/is/a/../an/example/path";
     
-    t = t.new();
-    println(t.number);
-}
+    p = p / "../test";
+    p = p / "../ok?";
 
+    println(p);
+}

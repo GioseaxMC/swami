@@ -30,7 +30,7 @@ macro str(x) {
 
 func Str Str_call(Str self, ptr char data) { self = data; self; }
 
-func Str str_join(Str self, ptr Str list) {
+func Str Str_join(ptr Str self, ptr Str list) {
     assert(is_array(list), "str.join() can only take an array of list created with darrays.sw");
     Str new;
     if !arr_len(list) return new;
@@ -52,11 +52,23 @@ func Str str_join(Str self, ptr Str list) {
     new;
 }
 
+func Str str_join(Str self, ptr Str list) {
+    self.join(list);
+}
+
 func void Str_assign_ptr_char(ptr Str self, ptr char other) {
     self.data = mm_alloc(strlen(other));
     memcpy(self.data, other, strlen(other));
     self.len = strlen(other);
     self.cap = self.len;
+}
+
+func bool Str_equal_ptr_char(Str self, ptr char other) {
+    if self.len != strlen(other) return 0;
+    for (i=0, i<self.len, i++, {
+        if self.data[i] != other[i] return 0;
+    });
+    return 1;
 }
 
 func bool Str_equal_Str(Str self, Str other) {
@@ -140,13 +152,26 @@ func Str str_chop(ptr Str self, Str delim) {
     return cut;
 }
 
-func ptr Str str_split(Str line, Str delim) {
+func ptr Str Str_split(ptr Str _line, Str delim) {
+    line = *_line;
     strings = new_array_with_gc(Str);
     while line.len {
         s = str_chop(&line, delim);
         arr_push(strings, s);
     };
     return strings;
+}
+
+func ptr Str str_split(Str line, Str delim) {
+    return line.split(delim);
+}
+
+func Str Str_replace(ptr Str origin, Str old, Str new) {
+    new.join((*origin).split(new));
+}
+
+func Str str_replace(Str origin, Str old, Str new) {
+    origin.replace(old, new);
 }
 
 func void Printer_when_ptr_Str(ptr void _, ptr Str strings) {
